@@ -1,4 +1,4 @@
-"""Semantic image classification head and task ontology."""
+"""Semantic image-token classification head and task ontology."""
 
 from __future__ import annotations
 
@@ -6,6 +6,10 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 DENTAL_SLOTS = (
@@ -32,78 +36,79 @@ SLOT_CLASSES = {
 ROMAN_CLASS = re.compile(r"\bclass\s+(iv|iii|ii|i)\b")
 
 
-def make_semantic_head():
-    import torch
-    import torch.nn as nn
-    import torch.nn.functional as F
+class SemanticImageTokenHead(nn.Module):
+    """Shared semantic head over the frozen ``[256, 2560]`` image tokens."""
 
-    class SemanticHead(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.token_ln = nn.LayerNorm(2560)
-            self.token_projector = nn.Linear(2560, 128)
-            self.bone_trunk = self._trunk(896)
-            self.fundus_trunk = self._trunk(896)
-            self.iugc_trunk = self._trunk(896)
-            self.dental_trunk = self._trunk(1792)
-            self.bone_head = nn.Linear(128, len(SLOT_CLASSES["bone_diagnosis"]))
-            self.fundus_diagnosis_head = nn.Linear(128, len(SLOT_CLASSES["fundus_diagnosis"]))
-            self.fundus_age_head = nn.Linear(128, len(SLOT_CLASSES["fundus_age"]))
-            self.iugc_head = nn.Linear(128, len(SLOT_CLASSES["iugc_standard_plane"]))
-            self.dental_root_head = nn.Linear(128, 2)
-            self.dental_continuity_head = nn.Linear(128, 4)
-            self.dental_kennedy_head = nn.Linear(128, 6)
+    def __init__(self) -> None:
+        super().__init__()
+        self.token_ln = nn.LayerNorm(2560)
+        self.token_projector = nn.Linear(2560, 128)
+        self.bone_trunk = self._trunk(896)
+        self.fundus_trunk = self._trunk(896)
+        self.iugc_trunk = self._trunk(896)
+        self.dental_trunk = self._trunk(1792)
+        self.bone_head = nn.Linear(128, len(SLOT_CLASSES["bone_diagnosis"]))
+        self.fundus_diagnosis_head = nn.Linear(128, len(SLOT_CLASSES["fundus_diagnosis"]))
+        self.fundus_age_head = nn.Linear(128, len(SLOT_CLASSES["fundus_age"]))
+        self.iugc_head = nn.Linear(128, len(SLOT_CLASSES["iugc_standard_plane"]))
+        self.dental_root_head = nn.Linear(128, 2)
+        self.dental_continuity_head = nn.Linear(128, 4)
+        self.dental_kennedy_head = nn.Linear(128, 6)
 
-        @staticmethod
-        def _trunk(input_dim: int) -> nn.Sequential:
-            return nn.Sequential(
-                nn.LayerNorm(input_dim), nn.Linear(input_dim, 256), nn.GELU(), nn.Dropout(.15),
-                nn.Linear(256, 128), nn.GELU(),
-            )
+    @staticmethod
+    def _trunk(input_dim: int) -> nn.Sequential:
+        return nn.Sequential(
+            nn.LayerNorm(input_dim), nn.Linear(input_dim, 256), nn.GELU(), nn.Dropout(.15),
+            nn.Linear(256, 128), nn.GELU(),
+        )
 
-        @staticmethod
-        def stats(tokens: Any) -> Any:
-            quantiles = torch.quantile(tokens, torch.tensor([.10, .25, .50, .75, .90], device=tokens.device), dim=1)
-            quantiles = quantiles.permute(1, 0, 2).reshape(tokens.shape[0], -1)
-            return torch.cat([quantiles, tokens.mean(dim=1), tokens.std(dim=1, unbiased=False)], dim=1)
+    @staticmethod
+    def stats(tokens: Any) -> Any:
+        quantiles = torch.quantile(tokens, torch.tensor([.10, .25, .50, .75, .90], device=tokens.device), dim=1)
+        quantiles = quantiles.permute(1, 0, 2).reshape(tokens.shape[0], -1)
+        return torch.cat([quantiles, tokens.mean(dim=1), tokens.std(dim=1, unbiased=False)], dim=1)
 
-        def projected(self, tokens: Any) -> Any:
-            return F.gelu(self.token_projector(self.token_ln(tokens.float())))
+    def projected(self, tokens: Any) -> Any:
+        return F.gelu(self.token_projector(self.token_ln(tokens.float())))
 
-        def forward_source(self, tokens: Any, source: str) -> dict[str, Any]:
-            projected = self.projected(tokens)
-            global_stats = self.stats(projected)
-            if source == "bone_marrow":
-                return {"bone_diagnosis": self.bone_head(self.bone_trunk(global_stats))}
-            if source == "fundus":
-                representation = self.fundus_trunk(global_stats)
-                return {
-                    "fundus_diagnosis": self.fundus_diagnosis_head(representation),
-                    "fundus_age": self.fundus_age_head(representation),
-                }
-            if source == "iugc":
-                return {"iugc_standard_plane": self.iugc_head(self.iugc_trunk(global_stats))}
-            if source != "dental":
-                raise ValueError(source)
-            grid = projected.reshape(projected.shape[0], 16, 16, 128)
-            upper = self.stats(grid[:, :8].reshape(grid.shape[0], -1, 128))
-            lower = self.stats(grid[:, 8:].reshape(grid.shape[0], -1, 128))
-            upper_rep = self.dental_trunk(torch.cat([global_stats, upper], dim=1))
-            lower_rep = self.dental_trunk(torch.cat([global_stats, lower], dim=1))
+    def forward_source(self, tokens: Any, source: str) -> dict[str, Any]:
+        projected = self.projected(tokens)
+        global_stats = self.stats(projected)
+        if source == "bone_marrow":
+            return {"bone_diagnosis": self.bone_head(self.bone_trunk(global_stats))}
+        if source == "fundus":
+            representation = self.fundus_trunk(global_stats)
             return {
-                "ROOT_FRAGMENT_MAXILLARY": self.dental_root_head(upper_rep),
-                "ROOT_FRAGMENT_MANDIBULAR": self.dental_root_head(lower_rep),
-                "TOOTH_LOSS_MAXILLARY": self.dental_continuity_head(upper_rep),
-                "TOOTH_LOSS_MANDIBULAR": self.dental_continuity_head(lower_rep),
-                "KENNEDY_MAXILLARY": self.dental_kennedy_head(upper_rep),
-                "KENNEDY_MANDIBULAR": self.dental_kennedy_head(lower_rep),
+                "fundus_diagnosis": self.fundus_diagnosis_head(representation),
+                "fundus_age": self.fundus_age_head(representation),
             }
+        if source == "iugc":
+            return {"iugc_standard_plane": self.iugc_head(self.iugc_trunk(global_stats))}
+        if source != "dental":
+            raise ValueError(source)
+        grid = projected.reshape(projected.shape[0], 16, 16, 128)
+        upper = self.stats(grid[:, :8].reshape(grid.shape[0], -1, 128))
+        lower = self.stats(grid[:, 8:].reshape(grid.shape[0], -1, 128))
+        upper_rep = self.dental_trunk(torch.cat([global_stats, upper], dim=1))
+        lower_rep = self.dental_trunk(torch.cat([global_stats, lower], dim=1))
+        return {
+            "ROOT_FRAGMENT_MAXILLARY": self.dental_root_head(upper_rep),
+            "ROOT_FRAGMENT_MANDIBULAR": self.dental_root_head(lower_rep),
+            "TOOTH_LOSS_MAXILLARY": self.dental_continuity_head(upper_rep),
+            "TOOTH_LOSS_MANDIBULAR": self.dental_continuity_head(lower_rep),
+            "KENNEDY_MAXILLARY": self.dental_kennedy_head(upper_rep),
+            "KENNEDY_MANDIBULAR": self.dental_kennedy_head(lower_rep),
+        }
 
-    return SemanticHead()
+
+def make_semantic_head() -> SemanticImageTokenHead:
+    """Compatibility factory for the paper-named semantic image-token head."""
+
+    return SemanticImageTokenHead()
 
 
-def load_semantic_heads(asset_dir: Path, device: str) -> list[Any]:
-    import torch
+def load_semantic_head_ensemble(asset_dir: Path, device: str) -> list[SemanticImageTokenHead]:
+    """Load and validate the three-fold semantic image-token ensemble."""
 
     path = asset_dir / "classification_heads.pt"
     payload = torch.load(path, map_location="cpu", weights_only=False)
@@ -112,14 +117,20 @@ def load_semantic_heads(asset_dir: Path, device: str) -> list[Any]:
         raise RuntimeError("classification head pack must contain three folds")
     models = []
     for fold in ("0", "1", "2"):
-        model = make_semantic_head().to(device)
+        model = SemanticImageTokenHead().to(device)
         model.load_state_dict(folds[fold]["state_dict"], strict=True)
         model.eval()
         models.append(model)
     return models
 
 
-def resolve_slot(row: dict[str, Any], parse_choices) -> str:
+def load_semantic_heads(asset_dir: Path, device: str) -> list[SemanticImageTokenHead]:
+    """Backward-compatible alias for :func:`load_semantic_head_ensemble`."""
+
+    return load_semantic_head_ensemble(asset_dir, device)
+
+
+def resolve_classification_slot(row: dict[str, Any], parse_choices) -> str:
     source = str(row["dataset"])
     question = str(row.get("source_question") or row.get("question") or row.get("prompt")).lower()
     choices = parse_choices(str(row.get("source_question") or row.get("question") or row.get("prompt")))
@@ -141,7 +152,7 @@ def resolve_slot(row: dict[str, Any], parse_choices) -> str:
     raise RuntimeError(f"unable to resolve semantic classification slot for {row['uid']}")
 
 
-def semantic_concept(source: str, slot: str, text: str, normalize) -> str | None:
+def map_option_to_semantic_concept(source: str, slot: str, text: str, normalize) -> str | None:
     value = normalize(text)
     if source == "dental":
         if slot.startswith("ROOT_FRAGMENT"):
@@ -179,10 +190,35 @@ def semantic_concept(source: str, slot: str, text: str, normalize) -> str | None
     return None
 
 
-def serialize_concept(row: dict[str, Any], slot: str, concept: str, parse_choices, normalize) -> str:
+def map_semantic_concept_to_option(row: dict[str, Any], slot: str, concept: str, parse_choices, normalize) -> str:
     choices = parse_choices(str(row.get("source_question") or row.get("question") or row.get("prompt")))
-    matches = [letter for letter, text in choices if semantic_concept(str(row["dataset"]), slot, text, normalize) == concept]
+    matches = [letter for letter, text in choices if map_option_to_semantic_concept(str(row["dataset"]), slot, text, normalize) == concept]
     if len(matches) != 1:
         raise RuntimeError(f"semantic mapper has {len(matches)} matches for {row['uid']} / {slot} / {concept}")
     return matches[0]
 
+
+def resolve_slot(row: dict[str, Any], parse_choices) -> str:
+    """Backward-compatible alias for :func:`resolve_classification_slot`."""
+
+    return resolve_classification_slot(row, parse_choices)
+
+
+def semantic_concept(source: str, slot: str, text: str, normalize) -> str | None:
+    """Backward-compatible alias for :func:`map_option_to_semantic_concept`."""
+
+    return map_option_to_semantic_concept(source, slot, text, normalize)
+
+
+def serialize_concept(row: dict[str, Any], slot: str, concept: str, parse_choices, normalize) -> str:
+    """Backward-compatible alias for :func:`map_semantic_concept_to_option`."""
+
+    return map_semantic_concept_to_option(row, slot, concept, parse_choices, normalize)
+
+
+__all__ = [
+    "DENTAL_SLOTS", "ROMAN_CLASS", "SLOT_CLASSES", "SemanticImageTokenHead",
+    "load_semantic_head_ensemble", "load_semantic_heads", "make_semantic_head",
+    "map_option_to_semantic_concept", "map_semantic_concept_to_option",
+    "resolve_classification_slot", "semantic_concept", "serialize_concept", "resolve_slot",
+]

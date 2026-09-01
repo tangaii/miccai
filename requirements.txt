@@ -10,5 +10,3 @@ peft>=0.10,<1
 accelerate>=0.30,<2
 safetensors>=0.4,<1
 catboost>=1.2,<2
-pytest>=8,<9
-

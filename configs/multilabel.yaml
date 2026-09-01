@@ -1,9 +1,13 @@
+# Reference-only fitting contract.  The runtime reads configs/default.yaml;
+# train.py selects these components explicitly.
 task: multi_label_classification
-head:
+components:
+  - multilabel-selector-ranker
+  - multilabel-probability-models
+  - multilabel-residual-head
+fixed_method_contract:
   hidden_dim: 128
   event_count: 40
-  token_chunk: 16
-candidate_scoring:
-  row_batch_size: 4
+  vocab_chunk_size: 16
+  scoring_row_batch_size: 4
   candidate_cardinalities: [1, 2, 3, 4]
-

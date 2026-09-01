@@ -22,6 +22,7 @@ SUPPORTED_TASKS = {TASK_CLASSIFICATION, TASK_MULTILABEL, TASK_REGRESSION}
 LABEL_KEYS = {
     "answer", "raw_answer", "target", "reference", "label", "ground_truth", "gold",
     "gold_answer", "target_value", "raw_target", "prediction", "pred", "output",
+    "labels", "answers", "gold_labels",
 }
 CHOICE_MARKER = re.compile(r"(?<![A-Za-z])([A-K])\s*[:.)]\s*", re.IGNORECASE)
 
@@ -75,6 +76,13 @@ def read_records(path: str | Path) -> list[dict[str, Any]]:
 
 
 def row_image_refs(row: dict[str, Any]) -> list[str]:
+    """Return the image references carried by a row.
+
+    The low-level helper preserves the input list so callers can report a
+    useful contract error.  Final inference is intentionally single-image;
+    use :func:`single_image_ref` at task/model boundaries.
+    """
+
     value = row.get("images") or row.get("image_paths") or row.get("image") or row.get("image_path")
     value = maybe_json(value)
     if isinstance(value, str):
@@ -85,6 +93,17 @@ def row_image_refs(row: dict[str, Any]) -> list[str]:
     if not refs:
         raise ValueError(f"missing image for uid={row.get('uid')}")
     return refs
+
+
+def single_image_ref(row: dict[str, Any]) -> str:
+    """Return the only legal inference image reference for ``row``."""
+
+    refs = row_image_refs(row)
+    if len(refs) != 1:
+        raise ValueError(
+            f"exactly one image is required for final inference; uid={row.get('uid')} has {len(refs)}"
+        )
+    return refs[0]
 
 
 def normalize_image_ref(value: str, image_root: Path | None = None, repo_root: Path | None = None) -> str:
@@ -140,7 +159,12 @@ def validate_input_rows(raw_rows: list[dict[str, Any]], image_root: Path | None 
         prompt = str(raw.get("prompt") or raw.get("question") or "").strip()
         if not prompt:
             raise ValueError(f"prompt/question missing for uid={uid}")
-        refs = [normalize_image_ref(value, image_root=image_root, repo_root=repo_root) for value in row_image_refs(raw)]
+        raw_refs = row_image_refs(raw)
+        if len(raw_refs) != 1:
+            raise ValueError(
+                f"exactly one image is required for final inference; uid={uid} has {len(raw_refs)}"
+            )
+        refs = [normalize_image_ref(raw_refs[0], image_root=image_root, repo_root=repo_root)]
         dataset = str(raw.get("dataset") or raw.get("source") or "").strip()
         if not dataset:
             raise ValueError(f"dataset/source missing for uid={uid}")
@@ -234,6 +258,8 @@ def validate_output_rows(input_rows: list[dict[str, Any]], output_rows: list[dic
 
 
 def parse_label_set(value: Any) -> set[str]:
+    """Canonical parser for reference and multi-label prediction sets."""
+
     value = maybe_json(value)
     if value is None:
         return set()
@@ -257,3 +283,12 @@ def parse_label_set(value: Any) -> set[str]:
         else:
             values = [text]
     return {normalize_text(item) for item in values if normalize_text(item) not in {"", "none", "no finding", "no findings", "n/a", "na", "null", "[]"}}
+
+
+__all__ = [
+    "CHOICE_MARKER", "LABEL_KEYS", "SUPPORTED_TASKS", "TASK_CLASSIFICATION",
+    "TASK_MULTILABEL", "TASK_REGRESSION", "atomic_write_jsonl", "canonical_task",
+    "image_sha", "load_image", "maybe_json", "normalize_image_ref", "normalize_text",
+    "parse_choices", "parse_label_set", "prepared_image", "read_records", "row_image_refs",
+    "single_image_ref", "uri_bytes", "validate_input_rows", "validate_output_rows",
+]

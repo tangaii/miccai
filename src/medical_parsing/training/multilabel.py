@@ -7,8 +7,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from medical_parsing.models.backbone import set_determinism
-from medical_parsing.tasks.multilabel import make_multilabel_model
+from medical_parsing.models.multilabel_head import MultiLabelResidualProbabilityHead
 from .common import ensure_2d, seed_everything
 
 
@@ -139,7 +138,7 @@ def train_multilabel_residual_head(
     if len(row_features) != len(tokens):
         raise ValueError("row_features length does not match tokens")
     device_name = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = make_multilabel_model().to(device_name)
+    model = MultiLabelResidualProbabilityHead().to(device_name)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     mean = row_features.mean(axis=0)
     scale = row_features.std(axis=0)

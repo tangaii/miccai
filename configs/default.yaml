@@ -2,15 +2,25 @@ model:
   name: google/medgemma-1.5-4b-it
   image_size: 896
   feature_batch_size: 8
-  scoring_row_batch_size: 4
-  token_chunk: 16
+  vocab_chunk_size: 16
   max_new_tokens: 256
   seed: 0
 
 multilabel:
   candidate_change_threshold: 0.05
   max_replacement_candidates: 32
+  scoring_row_batch_size: 4
+
+regression:
+  retrieval_neighbors: 15
+  generated_fusion_weight: 0.5
+  visual_fusion_weight: 0.5
+  base_fusion_weight: 0.75
+  retrieval_fusion_weight: 0.25
+  residual_correction_weight: 0.5
+  quantile_fusion_weight: 0.25
+  quantiles: [0.25, 0.50, 0.75]
+  geometry_pca_components: 64
 
 paths:
   checkpoint_dir: checkpoints
-

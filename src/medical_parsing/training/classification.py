@@ -7,7 +7,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from medical_parsing.models.classification_head import SLOT_CLASSES, make_semantic_head
+from medical_parsing.models.classification_head import SLOT_CLASSES, SemanticImageTokenHead
 from .common import seed_everything
 
 
@@ -76,7 +76,7 @@ def train_semantic_heads(
     output.parent.mkdir(parents=True, exist_ok=True)
     fold_payload: dict[str, Any] = {}
     for fold_index, (train_index, _valid_index) in enumerate(_fold_indices(len(tokens), folds, seed)):
-        model = make_semantic_head().to(device_name)
+        model = SemanticImageTokenHead().to(device_name)
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
         for _epoch in range(epochs):
             order = train_index.copy()

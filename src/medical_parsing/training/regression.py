@@ -7,7 +7,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from medical_parsing.models.regression_head import make_spatial_quantile_head
+from medical_parsing.models.regression_head import SpatialQuantileRefinementHead
 from .common import ensure_2d, seed_everything
 
 
@@ -145,7 +145,7 @@ def train_quantile_head(
     geometry_pca = PCA(n_components=64, svd_solver="randomized", random_state=0).fit(geometry_scaler.transform(geometry))
     geometry64 = geometry_pca.transform(geometry_scaler.transform(geometry)).astype(np.float32)
     device_name = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = make_spatial_quantile_head().to(device_name)
+    model = SpatialQuantileRefinementHead().to(device_name)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     quantiles = (0.25, 0.50, 0.75)
     for _epoch in range(epochs):

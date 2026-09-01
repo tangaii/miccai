@@ -1,258 +1,328 @@
 # Medical Image Parsing
 
-Initial public research release for a three-task medical-image parsing
-pipeline. The repository contains the readable inference, training/fitting,
-data-preparation, evaluation, and contract-test code. The trained model
-weights, task adapters, fitted estimators, competition data, and private
-retrieval tables are external inputs and are intentionally not distributed.
+Public research code for a three-task medical-image parsing pipeline. The
+repository contains the readable inference graph, component-wise fitting
+helpers, input/output contracts, local diagnostic metrics, and behavior tests.
+The MedGemma base model, LoRA adapters, fitted estimators, retrieval tables,
+competition data, and learned heads are external inputs and are not
+distributed here.
 
 ## Method overview
 
-All three branches share one external MedGemma 1.5 4B instruction-tuned
-backbone. The image path uses EXIF correction, RGB conversion, and deterministic
-896 x 896 BICUBIC preparation. The final method uses a small number of
-task-specific consumers of the same backbone:
+The method uses one external google/medgemma-1.5-4b-it vision-language
+backbone. The final input contract is exactly one local image per row. Images
+receive EXIF correction, RGB conversion, and deterministic 896 x 896 BICUBIC
+preparation. Task consumers are loaded sequentially; raw base-model use, the
+primary LoRA adapter, and the regression LoRA adapter are separate model
+states and are never silently stacked.
 
-- classification combines a semantic image-token head with a prompt-generation
-  fallback selected by an external route manifest;
-- multi-label classification uses a generated initial set, parser-native
-  teacher-forced singleton scores, constrained candidate correction, candidate
-  ranking, probability priors, a learned residual head, and a cardinality-aware
-  decoder;
-- regression combines multi-view visual features, fixed geometry features,
-  cross-group retrieval, a visual estimator, a numeric generation estimate, a
-  residual correction, and a spatial quantile head.
+The paper-level modules are:
 
-The public code keeps these contracts explicit. File paths and command-line
-interfaces are refactored for portability, while prompt rendering,
-tokenization, image processing, candidate ordering, feature dimensions,
-normalization, decoder ties, and output serialization remain part of the
-method contract.
+1. Shared MedGemma Vision-Language Backbone — prompt rendering, generation, raw
+   projected image-token extraction, decoder access, and single-adapter loading.
+2. Task-Routed Semantic–Generative Classification — a route manifest selects
+   the semantic image-token head, direct prompt generation, or instructional
+   generation fallback.
+3. Structured Evidence-Refined Multi-Label Prediction — an initial generated
+   set is refined using parser-native singleton evidence, candidate selection,
+   listwise re-ranking, atom/cardinality probability models, a
+   token-conditioned residual head, and GFM decoding.
+4. Multi-View Retrieval–Quantile Regression — adaptive image views, visual and
+   intensity-edge geometry representations, visual and generated estimates,
+   cross-group retrieval, residual correction, and a spatial quantile head are
+   fused into the bounded numeric output.
 
-## Shared backbone
+The complete paper-to-code table is in
+[docs/METHOD_CODE_MAP.md](docs/METHOD_CODE_MAP.md). The README and that table
+use the same formal names; compatibility aliases are called out where they
+preserve the original Python API or serialized feature contract.
 
-The expected base model is `google/medgemma-1.5-4b-it`, supplied through a
-local Hugging Face directory. The adapter loader accepts one LoRA adapter at a
-time, verifies its base-model identity, and rejects unexpected adapter stacks.
-The classification, multi-label, and regression adapters are loaded
-sequentially so the base model is never silently combined with incompatible
-task adapters.
+## Shared MedGemma Vision-Language Backbone
 
-The processor is configured for right padding. Generation is greedy and
-deterministic. Image-token consumers expect `[batch, 256, 2560]` projected
-vision tokens.
+load_raw_bundle loads the external base model for raw visual features.
+load_adapter_bundle loads exactly one PEFT LoRA adapter for one task state,
+checks the declared base identity, detects source and target visual-tower
+namespaces independently, remaps keys only when their orientations are
+actually opposite, and reports total/loaded/missing/unexpected adapter keys.
 
-## Classification pipeline
+The runtime therefore follows this state contract:
 
-The route manifest maps normalized dataset/question keys to one of three public
-route names: `semantic`, `prompt`, or `fallback`.
+- raw base state: used for semantic image-token extraction and regression
+  multi-view visual features;
+- primary adapter state: used for classification generation, multi-label
+  generation/scoring, and the regression spatial-token branch;
+- regression adapter state: used only for the generated numeric regression
+  estimate.
 
-For eligible bone-marrow, fundus, IUGC, and dental rows, semantic inference
-uses the raw backbone image tokens. A LayerNorm and 2560-to-128 projection
-feed quantile, mean, and standard-deviation summaries. Source-specific trunks
-produce the diagnosis, age, plane, or dental jaw outputs. Dental upper and
-lower halves share the jaw heads. Three fitted folds are averaged before the
-semantic concept is mapped back to the row's option letter.
+extract_image_tokens calls model.get_image_features(pixel_values=...). Its
+compatibility prompt argument is retained for the unchanged processor batch,
+but it does not condition the returned representation. These are projected
+image tokens, not two prompt-conditioned semantic/spatial feature families.
 
-Prompt and fallback routes use the external LoRA adapter and the same
-parser-safe option mapping. Every input row must receive exactly one legal
-option letter.
+Generation is greedy (do_sample=False) with the configured token limit.
+set_determinism enables the available random, cuDNN, and PyTorch determinism
+controls. PyTorch is called with warn_only=True, so this is a
+determinism-control setting rather than a claim of bitwise identity on every
+hardware/software stack.
 
-## Multi-label pipeline
+## Task-Routed Semantic–Generative Classification
 
-The fixed vocabulary contains ten parser atoms. Generated answers are parsed
-into sets and serialized in a deterministic atom order with a trailing
-semicolon. For each row, the scorer evaluates the ten singleton serialized
-answers using the actual chat template and image processor.
+The route manifest is normalized to these formal internal routes:
 
-The post-processing sequence is:
+- semantic_head — SemanticImageTokenHead over raw [256, 2560] image tokens,
+  with three fitted folds averaged before option mapping;
+- direct_prompt_generation — prompt_only_generated_text, which sends the
+  system prompt and the row's original prompt directly;
+- instructional_generation_fallback — generated_text, which adds the task
+  instruction and any structured options before generation.
 
-1. generate the initial set;
-2. build a deterministic keep/add/drop/nearby-replacement candidate table;
-3. score candidates with a fitted selector and apply the configured 0.05
-   change threshold;
-4. rank the corrected candidates with a fitted ranker;
-5. fit forty atom/cardinality prior models and combine them with the image
-   residual head;
-6. decode cardinalities 1 through 10 using the fixed
-   `2 / (predicted_cardinality + gold_cardinality)` utility.
+The manifest parser also accepts the historical values semantic, prompt, and
+fallback; the external manifest does not need to be rewritten. Dental semantic
+heads remain in SemanticImageTokenHead for strict checkpoint compatibility, but
+the final classification orchestration activates semantic inference only for
+bone_marrow, fundus, and iugc. A dental row is not silently treated as an
+active semantic-head route; it uses the generation fallback when the manifest
+requests the legacy semantic route.
 
-The candidate library, selector, ranker, probability models, and residual head
-are all external checkpoint assets. Their descriptive filenames and expected
-consumers are documented in `checkpoints/README.md`.
+resolve_classification_slot, map_option_to_semantic_concept, and
+map_semantic_concept_to_option keep the semantic ontology separate from
+row-specific option letters. Every output is checked against the legal options
+parsed from that row.
 
-## Regression pipeline
+## Structured Evidence-Refined Multi-Label Prediction
 
-Each image yields the original view plus three aspect-ratio-aware crops. Each
-view is processed by the raw backbone vision tower and multimodal projector;
-the mean pooled 2560-dimensional view features are combined into a 7680-
-dimensional original/mean-crop/max-crop representation.
+The fixed parser vocabulary contains ten legal atoms. The formal atom groups
+are SEMANTIC_LABEL_ATOMS and AUXILIARY_LABEL_ATOMS; the old SEMANTIC and PSEUDO
+names remain compatibility aliases only. The canonical set parser is
+schema.parse_label_set; parse_multilabel is its compatibility alias.
+Serialization uses the fixed atom order and a trailing semicolon.
 
-The geometry descriptor has 960 values from normalized intensity and Sobel
-edges: 16 x 16 pooled cells, 32 vertical bands, and 32 horizontal bands for
-each of the three channels. Visual and geometry features use persisted
-StandardScaler/PCA transforms, L2 normalization, and a 0.5/0.5 concatenation
-for cross-group cosine retrieval.
+The inference chain is:
 
-The final estimate is the clipped blend
+1. Initial Generative Label Proposal — generated_text produces the initial
+   answer set.
+2. Teacher-Forced Singleton Evidence Scoring —
+   score_teacher_forced_streaming scores the ten serialized singleton answers
+   using the actual chat template and image processor.
+3. Thresholded Candidate Refinement — build_initial_candidate_table,
+   build_candidate_selector_features, and select_refined_candidate implement
+   deterministic keep/add/drop and nearby replacement candidates with the
+   frozen 0.05 change threshold.
+4. Listwise Candidate Re-ranking — build_reranked_candidates and
+   build_candidate_ranker_features construct and rank the corrected set.
+5. Label–Cardinality Joint Probability Estimation —
+   build_probability_model_features feeds the ten-atom by four-cardinality
+   fitted probability models.
+6. Token-Conditioned Residual Probability Refinement —
+   MultiLabelResidualProbabilityHead adds the bounded learned residual to the
+   base probabilities.
+7. Cardinality-Aware GFM Decoding — gfm_decode evaluates prediction
+   cardinalities 1 through 10 using the fixed F1 utility and deterministic
+   ties.
 
-```text
-base = 0.5 * generated_numeric_value + 0.5 * visual_estimator
-retrieval_blend = 0.75 * base + 0.25 * cross_group_weighted_median
-residual_corrected = clip(retrieval_blend + 0.5 * residual_median, 0, 100)
-prediction = clip(0.75 * residual_corrected + 0.25 * spatial_q75, 0, 100)
-```
+The normal scorer materializes decoder hidden states once and visits the
+language-model head in vocab_chunk_size=16 vocabulary rows. The row batch size
+is an MLC setting (scoring_row_batch_size=4). The full-logit path is only a
+capability fallback for wrappers that do not expose the decoder and uses the
+same final-logit soft-cap when one is declared. Alignment, shape, non-finite,
+and model errors are not silently converted into that fallback.
 
-The spatial head uses four learned queries over coordinate-aware 16 x 16
-tokens and returns ordered 0.25, 0.50, and 0.75 estimates.
+## Multi-View Retrieval–Quantile Regression
 
-## Memory-efficient scoring
+build_adaptive_image_views keeps the frozen crop policy: wide and tall images
+produce the original plus three crops; near-square images produce the original
+plus four quadrant crops. The implementation is aspect-ratio adaptive; the
+crop algorithm is not changed by this documentation.
 
-The normal multi-label scorer runs the decoder once and obtains hidden states
-without constructing a full vocabulary-logit tensor. It visits the language
-model head in `TOKEN_CHUNK=16` vocabulary rows, accumulates the log-sum-exp
-denominator, and evaluates only the target token rows. The operational row
-batch is four rows by ten singleton answers. This keeps the peak vocabulary
-activation proportional to `target_tokens x 16` rather than
-`batch x sequence_length x vocabulary_size`.
+Each view yields projected 2,560-dimensional visual features. The original,
+mean-crop, and max-crop views form a 7,680-dimensional visual representation.
+The 960-dimensional geometry descriptor combines normalized intensity and
+Sobel edges from 16 x 16 pooled cells, 32 vertical bands, and 32 horizontal
+bands for each of three channels.
 
-`score_logits_full` is retained only as a small reference/compatibility path;
-the tests compare it with `score_hidden_streaming` for numerical equivalence.
+The formal numerical chain is:
 
-## Repository layout
+~~~
+generated_numeric_estimate = numeric generation branch
+visual_regression_estimate = fitted visual estimator
+base_fused_estimate = 0.5 * generated_numeric_estimate
+                       + 0.5 * visual_regression_estimate
+retrieval_estimate = cross-group weighted-median retrieval
+retrieval_refined_estimate = 0.75 * base_fused_estimate
+                             + 0.25 * retrieval_estimate
+retrieved_residual_correction = cross-group residual retrieval
+residual_corrected = clip(retrieval_refined_estimate
+                          + 0.5 * retrieved_residual_correction, 0, 100)
+prediction = clip(0.75 * residual_corrected
+                  + 0.25 * upper_quantile_estimate, 0, 100)
+~~~
 
-```text
-configs/                  Runtime and task configuration
-checkpoints/README.md      External asset contract; no weights are included
-data/README.md             Input layout and redistribution policy
-src/medical_parsing/      Package code
-  data/                   Input normalization
-  evaluation/             Classification, set, and regression metrics
-  inference/              Three-branch orchestration
-  models/                 Backbone and fitted-head definitions
-  tasks/                  Classification, multi-label, and regression logic
-  training/               Head, estimator, residual, and LoRA fitting helpers
-scripts/                  Data, smoke, training, inference, and evaluation CLIs
-tools/                    Feature extraction helper
-tests/                    Contract and behavior tests
-inference.py              Public inference entry point
-train.py                  Public fitting dispatcher
-evaluate.py               Public evaluation entry point
-```
+SpatialQuantileRefinementHead uses 256 coordinate-aware tokens, a 128-D
+projection, 2-D coordinates, four learned queries, and ordered Q25/Q50/Q75
+outputs. The fixed/default regression constants are centralized in
+RegressionConfig.
 
-## Input and output
+## Input and output contract
 
-Input records are unlabeled JSONL objects with at least:
+Input records are unlabeled JSONL/JSON objects. Each row requires a unique
+UID, task type, dataset/source, prompt/question, and exactly one local image
+reference:
 
-```json
+~~~
 {"uid":"case-001","task_type":"classification","dataset":"fundus","prompt":"...","images":["/local/image.png"]}
-```
+~~~
 
-`images` can contain local paths or validated `zip://archive::member`
-references. Remote URLs are rejected. Every UID must be unique. Prediction
-output is canonical JSONL with exactly these keys:
+Local paths and validated zip://archive::member references are supported;
+remote URLs are rejected. Answer, target, label, reference, prediction, and
+related gold fields are rejected by the inference validator. Training data
+has a separate labeled contract and must not be passed through the inference
+preparation script.
 
-```json
+Prediction output is canonical JSONL with exactly:
+
+~~~
 {"uid":"case-001","task_type":"classification","prediction":"A"}
-```
+~~~
 
 The output validator checks UID order, task identity, legal classification
-letters, legal multi-label atoms, finite regression values, and the `[0, 100]`
+letters, legal multi-label atoms, finite regression values, and the [0, 100]
 regression range.
 
 ## Quick start
 
-Create an isolated environment and install the package:
+Create an isolated environment and install runtime dependencies before the
+editable package:
 
-```bash
+~~~
 python -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
 pip install -e .
-```
+pip install -r requirements-dev.txt  # tests only
+~~~
 
-Create a synthetic fixture and validate the full input contract without
-external assets:
+Run the public contract smoke test without external model or checkpoint
+assets:
 
-```bash
+~~~
 python scripts/prepare_smoke_data.py --output-dir .smoke
-python inference.py --input .smoke/input.jsonl --output .smoke/predictions.jsonl --dry-run
+python inference.py --input .smoke/input.jsonl \
+  --output .smoke/predictions.jsonl --dry-run
 pytest -q
-```
+~~~
 
-For actual inference, place the canonical fitted files named in
-`checkpoints/README.md` in an external directory and provide the base model
-and two task adapters:
+The code was revalidated on September 1, 2026 in the project environment with
+Python 3.12.3, NumPy 1.26.0, Pillow 12.2.0, PyYAML 6.0.3, SciPy 1.11.3,
+scikit-learn 1.3.2, joblib 1.1.1, PyTorch 2.9.0+ppu2.0.0, Transformers 5.2.0,
+PEFT 0.18.0, Accelerate 1.12.0, safetensors 0.7.0, CatBoost 1.2.10, and
+pytest 7.2.0. CUDA was available with CUDA 12.9. Other stacks may produce
+small floating-point differences.
 
-```bash
+For actual inference, keep all learned assets outside this repository and
+pass their directory explicitly:
+
+~~~
 python inference.py \
   --input prepared.jsonl \
   --output predictions.jsonl \
   --checkpoint-dir /path/to/external/checkpoints \
   --base /path/to/medgemma \
-  --adapter /path/to/official-task-adapter \
+  --adapter /path/to/primary-task-adapter \
   --reg-adapter /path/to/regression-task-adapter \
   --device cuda:0 \
   --audit-json run-audit.json
-```
+~~~
 
-The regression adapter is required only when regression rows are present. The
-same command supports any mixture of the three task types.
+The regression adapter is required only when regression rows are present. See
+checkpoints/README.md for the exact asset contract.
 
 ## Training and fitting
 
-The repository includes code for:
+The public fitting APIs cover the following components:
 
-- extracting shared image tokens with `tools/extract_features.py`;
-- fitting three-fold semantic classification heads;
-- fitting candidate selector/ranker models and forty probability models;
-- training the multi-label residual head;
-- fitting the visual regression estimator and retrieval reference;
-- writing UID-aligned residuals;
-- training the spatial regression quantile head;
-- training one LoRA adapter with the external base model.
+- classification-head — three-fold semantic image-token heads;
+- multilabel-selector-ranker — candidate selector and listwise ranker;
+- multilabel-probability-models — 40 atom/cardinality probability models;
+- multilabel-residual-head — token-conditioned residual probability head;
+- regression-visual-estimator — visual estimator with scaler/PCA;
+- regression-reference — cross-group retrieval table and transforms;
+- regression-residuals — UID-aligned cross-fitted residual table;
+- regression-quantile-head — spatial quantile head and geometry transforms.
 
-The root dispatcher selects a component based on the NPZ keys. Examples:
+Use the explicit component CLI so the command names the paper module being fit:
 
-```bash
-python train.py --task classification --features tokens.npz \
-  --labels semantic_labels.jsonl --output classification_heads.pt
-python train.py --task regression --features visual_features.npz \
-  --output regression_visual_model.joblib
-```
+~~~
+python train.py --component classification-head \
+  --features tokens.npz --labels semantic_labels.jsonl \
+  --output classification_heads.pt
 
-Fitting requires the original labeled training tables or user-owned
-replacement data. Those data, feature caches, fitted estimators, and model
-weights are not part of this repository.
+python train.py --component regression-visual-estimator \
+  --features visual_features.npz --output regression_visual_model.joblib
+~~~
+
+The legacy --task interface remains supported and infers a component from NPZ
+keys. The component dispatcher does not create the route manifest, template
+map, candidate library, or LoRA adapters: those are external or data-derived
+preparation steps documented in the checkpoint contract.
+
+training/adapters.py is a generic adapter-training utility. Its target
+modules, prompt supervision, and training arguments are configurable helper
+defaults; the repository does not claim that they exactly reproduce the
+external competition adapters.
+
+The files under configs/classification.yaml, configs/multilabel.yaml, and
+configs/regression.yaml are reference-only component contracts. Runtime
+defaults are read from configs/default.yaml; load_config is the single runtime
+configuration source.
 
 ## Evaluation
 
-Evaluate a canonical prediction file against a labeled JSONL supplied by the
-user:
+evaluate.py reports diagnostic/local classification accuracy, multi-label exact
+match and micro/sample F1, and regression MAE/RMSE/bias:
 
-```bash
+~~~
 python evaluate.py --reference labeled_reference.jsonl \
   --predictions predictions.jsonl --output metrics.json
-```
+~~~
 
-The evaluator reports classification accuracy, multi-label exact match and
-micro/sample F1, and regression MAE/RMSE/bias. It does not download data or
-contact a competition service.
+This is not the organizer's official challenge evaluator: it does not report
+balanced accuracy or the challenge overall score, does not download data, and
+does not contact Codabench. Official paper/challenge numbers must be computed
+with the organizer-provided evaluator and its documented provenance.
 
 ## Scope and limitations
 
-This is an initial research release of the method implementation. It does not
-claim a paper publication, a leaderboard position, or a final competition
-score. The exact fitted asset packs are external because they contain learned
-parameters, fitted transforms, retrieval references, or data-derived tables.
-The fitting APIs cover their public serialization contracts, but reproducing
-the original fitted values requires the corresponding labeled training data,
-source splits, and external base/adapters.
+The repository is a readable implementation and reproducibility contract, not a
+redistribution of the learned submission. Exact fitted values require the
+corresponding labeled source data, source splits, external MedGemma
+model/adapters, fitted estimators, and retrieval tables. The public code does
+not claim to reproduce a hidden leaderboard score from this repository alone.
 
-The repository contains no Docker image, submission archive, validation
-images/labels, prediction cache, private dataset, or trained weight file.
+Only source code, contracts, and tests are included; learned weights and
+restricted source data remain external.
+
+## Repository layout
+
+~~~
+configs/                  Runtime defaults and reference component contracts
+checkpoints/README.md     External asset contract; no weights are included
+data/README.md            Inference data layout and training-data boundary
+docs/METHOD_CODE_MAP.md   Paper Method to code/symbol mapping
+src/medical_parsing/      Package code
+  data/                   Inference manifest preparation
+  evaluation/              Diagnostic/local metrics
+  inference/              Three-branch orchestration
+  models/                 Backbone and paper-locatable neural modules
+  tasks/                  Classification, multi-label, and regression logic
+  training/               Component fitting and generic LoRA utility
+tests/                    Contract and behavior tests
+inference.py              Public inference entry point
+train.py                  Public component fitting dispatcher
+evaluate.py               Public diagnostic evaluation entry point
+~~~
 
 ## License
 
 The refactored source is released under the MIT License. Upstream model,
-adapter, dependency, and dataset terms remain applicable to those external
-artifacts; see `LICENSE_DECISION.md`.
+adapter, dependency, and dataset terms remain applicable to external
+artifacts; see LICENSE_DECISION.md.

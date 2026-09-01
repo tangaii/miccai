@@ -6,12 +6,10 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from medical_parsing.models.backbone import (
-    apply_chat_template,
-    build_prompt,
     configure_environment,
     messages_for,
 )
-from medical_parsing.schema import prepared_image, row_image_refs
+from medical_parsing.schema import prepared_image, single_image_ref
 
 
 def build_lora_model(
@@ -23,7 +21,11 @@ def build_lora_model(
     dropout: float = 0.05,
     target_modules: Sequence[str] = ("q_proj", "k_proj", "v_proj", "o_proj"),
 ):
-    """Load the external base and attach one standard LoRA adapter."""
+    """Load the external base and attach a generic single LoRA adapter.
+
+    This helper is a configurable training utility, not a claim of exact
+    provenance for any external competition adapter.
+    """
 
     import torch
     from peft import LoraConfig, get_peft_model
@@ -64,7 +66,7 @@ class MultimodalSupervisionDataset:
         if "target" not in row:
             raise ValueError(f"adapter-training row has no target: {row.get('uid')}")
         text = messages_for(row, self.processor, answer=str(row["target"]))
-        image = prepared_image(row_image_refs(row)[0], image_size=self.image_size)
+        image = prepared_image(single_image_ref(row), image_size=self.image_size)
         batch = self.processor(text=[text], images=[[image]], return_tensors="pt", padding=True)
         item = {key: value[0] if hasattr(value, "ndim") and value.ndim > 0 else value for key, value in batch.items()}
         labels = item["input_ids"].clone()
@@ -104,7 +106,12 @@ def train_lora_adapter(
     image_size: int = 896,
     device_map: str | dict[str, Any] | None = "auto",
 ) -> dict[str, Any]:
-    """Train and save a task adapter; the base model remains external."""
+    """Train and save a generic task adapter; the base remains external.
+
+    The caller supplies labeled rows and the processor.  The helper's prompt,
+    target masking, LoRA target modules, and Trainer arguments are public
+    defaults rather than an asserted reproduction of the final adapter pack.
+    """
 
     import torch
     from transformers import TrainingArguments, Trainer

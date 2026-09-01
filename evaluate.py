@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate canonical predictions against a user-supplied labeled file."""
+"""Compute diagnostic/local metrics for canonical predictions."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from medical_parsing.evaluation import evaluate_files  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Evaluate canonical prediction JSONL against labeled reference JSONL.")
+    parser = argparse.ArgumentParser(description="Compute diagnostic/local metrics against labeled reference JSONL.")
     parser.add_argument("--reference", required=True, type=Path)
     parser.add_argument("--predictions", required=True, type=Path)
     parser.add_argument("--output", type=Path, default=None, help="optional JSON summary path")

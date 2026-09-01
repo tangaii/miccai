@@ -16,13 +16,20 @@ The public input schema is JSONL with one object per row:
 ```
 
 Supported tasks are `classification`, `multi_label_classification`, and
-`regression`.  Each row needs a unique `uid`, a dataset/source name, one or
-more local image references, and a prompt or question.  Inputs must not
-contain answer, target, label, or prediction fields.
+`regression`.  Each row needs a unique `uid`, a dataset/source name, exactly
+one local image reference, and a prompt or question.  Inputs must not contain
+answer, target, label, reference, or prediction fields.  The validator rejects
+multi-image rows because all final task branches consume one image per row.
 
-For training, use `scripts/prepare_data.py` to convert source JSON records to a
-normalized JSONL manifest.  Store user data outside the repository when its
-license or size does not permit redistribution.  A typical local layout is:
+`scripts/prepare_data.py` is an inference-manifest preparation tool only.  It
+normalizes unlabeled records and deliberately rejects training labels.  It is
+not a source-data converter and does not produce any learned checkpoint.
+Training requires a separate user-owned labeled table/feature cache matching
+the fitting function documented in `checkpoints/README.md` and the explicit
+component CLI in the root `train.py`.
+
+Store user data outside the repository when its license or size does not
+permit redistribution.  A typical local layout is:
 
 ```text
 data-root/
@@ -33,4 +40,3 @@ data-root/
 
 The smoke-data generator used by tests creates synthetic images only and is
 not an official metric or data reproduction.
-

@@ -48,3 +48,25 @@ def test_labeled_input_is_rejected(tmp_path):
             "uid": "x", "task_type": "regression", "dataset": "demo",
             "prompt": "measure", "images": [str(image_path)], "answer": 3,
         }], image_root=tmp_path)
+
+
+def test_final_input_contract_requires_exactly_one_image(tmp_path):
+    image_path = tmp_path / "image.png"
+    second_path = tmp_path / "second.png"
+    Image.new("RGB", (5, 5), "white").save(image_path)
+    Image.new("RGB", (5, 5), "black").save(second_path)
+    with pytest.raises(ValueError, match="exactly one image"):
+        validate_input_rows([{
+            "uid": "x", "task_type": "regression", "dataset": "demo",
+            "prompt": "measure", "images": [str(image_path), str(second_path)],
+        }], image_root=tmp_path)
+
+
+def test_plural_label_fields_are_rejected_as_inference_leakage(tmp_path):
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (5, 5), "white").save(image_path)
+    with pytest.raises(ValueError, match="labeled input"):
+        validate_input_rows([{
+            "uid": "x", "task_type": "regression", "dataset": "demo",
+            "prompt": "measure", "images": [str(image_path)], "labels": [],
+        }], image_root=tmp_path)

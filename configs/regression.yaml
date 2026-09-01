@@ -1,8 +1,14 @@
+# Reference-only fitting contract.  The runtime reads configs/default.yaml;
+# train.py selects regression components explicitly.
 task: regression
-head:
-  hidden_dim: 128
+component_contract:
+  quantile_head_hidden_dim: 128
   quantiles: [0.25, 0.50, 0.75]
   retrieval_neighbors: 15
-  blend_retrieval: 0.75
-  blend_quantile: 0.25
-
+  generated_fusion_weight: 0.5
+  visual_fusion_weight: 0.5
+  base_fusion_weight: 0.75
+  retrieval_fusion_weight: 0.25
+  residual_correction_weight: 0.5
+  quantile_fusion_weight: 0.25
+  geometry_pca_components: 64

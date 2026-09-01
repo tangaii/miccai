@@ -1,7 +1,9 @@
+# Reference-only fitting contract.  The runtime reads configs/default.yaml;
+# train.py selects this component explicitly and uses the same defaults.
 task: classification
-head:
+component: classification-head
+fixed_method_contract:
   folds: 3
   hidden_dim: 128
   dropout: 0.15
   feature_dim: 2560
-

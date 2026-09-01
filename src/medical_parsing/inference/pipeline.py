@@ -79,6 +79,7 @@ def run_inference(
         config = RuntimeConfig(
             model=config.model,
             multilabel=config.multilabel,
+            regression=config.regression,
             checkpoint_dir=Path(checkpoint_dir),
         )
     source = Path(input_path)
@@ -127,7 +128,7 @@ def run_inference(
         predictions.update(run_regression(
             by_task[TASK_REGRESSION], Path(base_path), Path(adapter_path),
             Path(regression_adapter_path), device, assets, config.model,
-            audit.setdefault("regression", {}),
+            audit.setdefault("regression", {}), regression_config=config.regression,
         ))
     output_rows = [
         {"uid": row["uid"], "task_type": row["task_type"], "prediction": predictions[row["uid"]]}
