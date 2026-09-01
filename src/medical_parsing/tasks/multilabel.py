@@ -490,6 +490,30 @@ def build_reranked_candidates(initial_generated_set: set[str], refined_candidate
     return result
 
 
+def apply_tooth_position_aware_correction(
+    candidates: list[dict[str, Any]],
+    selected_index: int,
+    tooth_index: int,
+) -> set[str]:
+    """Apply the frozen tooth-position correction after candidate ranking.
+
+    The first re-ranking candidate is the KEEP action, which preserves the
+    PNSS-refined set.  For FDI tooth position 8, a non-KEEP re-ranking choice
+    is replaced by that first candidate; every other row keeps the ranked
+    choice.  This mirrors the final competition execution path.
+    """
+
+    if not candidates:
+        raise ValueError("candidate list must not be empty")
+    if not 0 <= selected_index < len(candidates):
+        raise IndexError(f"selected candidate index out of range: {selected_index}")
+    if candidates[0].get("action") != "KEEP":
+        raise ValueError("candidate 0 must be the KEEP/PNSS candidate")
+    if tooth_index == 8 and selected_index != 0:
+        return set(candidates[0]["set"])
+    return set(candidates[selected_index]["set"])
+
+
 def build_candidate_ranker_features(
     scores: dict[str, float],
     meta: dict[str, Any],
@@ -652,7 +676,10 @@ def run_multilabel(
             for candidate in ranked
         ])
         ranker_scores = np.asarray(ranker.predict(ranker_x), dtype=np.float64).reshape(-1)
-        reranked_candidate_set = set(ranked[int(np.argmax(ranker_scores))]["set"])
+        reranked_choice = int(np.argmax(ranker_scores))
+        reranked_candidate_set = apply_tooth_position_aware_correction(
+            ranked, reranked_choice, int(meta["tooth_index"]),
+        )
         base_scores = np.zeros((len(ATOMS), len(CARDINALITIES)), dtype=np.float64)
         row_feature = build_probability_model_features(
             score_by_uid[uid], initial_generated_set, refined_candidate_set,
@@ -713,7 +740,7 @@ __all__ = [
     "ATOMS", "AUXILIARY_LABEL_ATOMS", "CARDINALITIES", "SEMANTIC_LABEL_ATOMS",
     "build_candidate_ranker_features", "build_candidate_selector_features",
     "build_initial_candidate_table", "build_probability_model_features",
-    "build_reranked_candidates", "gfm_decode", "load_candidate_library",
+    "build_reranked_candidates", "apply_tooth_position_aware_correction", "gfm_decode", "load_candidate_library",
     "make_multilabel_model", "parse_multilabel", "serialize_effective",
     "score_hidden_streaming", "score_logits_full", "score_teacher_forced_batch",
     "score_teacher_forced_streaming", "select_refined_candidate",

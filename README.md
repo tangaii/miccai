@@ -18,8 +18,9 @@ states and are never silently stacked.
 
 The paper-level modules are:
 
-1. Shared MedGemma Vision-Language Backbone — prompt rendering, generation, raw
-   projected image-token extraction, decoder access, and single-adapter loading.
+1. Unified Framework and Shared MedGemma Backbone — prompt rendering,
+   generation, raw projected image-token extraction, decoder access, and
+   single-adapter loading.
 2. Task-Routed Semantic–Generative Classification — a route manifest selects
    the semantic image-token head, direct prompt generation, or instructional
    generation fallback.
@@ -37,7 +38,7 @@ The complete paper-to-code table is in
 use the same formal names; compatibility aliases are called out where they
 preserve the original Python API or serialized feature contract.
 
-## Shared MedGemma Vision-Language Backbone
+## Unified Framework and Shared MedGemma Backbone
 
 load_raw_bundle loads the external base model for raw visual features.
 load_adapter_bundle loads exactly one PEFT LoRA adapter for one task state,
@@ -110,6 +111,8 @@ The inference chain is:
    frozen 0.05 change threshold.
 4. Listwise Candidate Re-ranking — build_reranked_candidates and
    build_candidate_ranker_features construct and rank the corrected set.
+   apply_tooth_position_aware_correction restores the frozen KEEP/PNSS choice
+   for FDI tooth position 8 when the ranker selects a non-KEEP candidate.
 5. Label–Cardinality Joint Probability Estimation —
    build_probability_model_features feeds the ten-atom by four-cardinality
    fitted probability models.

@@ -2,6 +2,7 @@ import numpy as np
 
 from medical_parsing.tasks.multilabel import (
     ATOMS,
+    apply_tooth_position_aware_correction,
     build_candidate_ranker_features,
     build_candidate_selector_features,
     build_initial_candidate_table,
@@ -53,3 +54,14 @@ def test_gfm_decode_is_deterministic():
     probabilities = np.zeros((10, 4), dtype=np.float64)
     probabilities[2, 0] = 0.99
     assert gfm_decode(probabilities) == {ATOMS[2]}
+
+
+def test_tooth_position_correction_matches_frozen_final_behavior():
+    candidates = [
+        {"set": {ATOMS[0]}, "action": "KEEP"},
+        {"set": {ATOMS[1]}, "action": "ADD"},
+    ]
+
+    assert apply_tooth_position_aware_correction(candidates, 1, 8) == {ATOMS[0]}
+    assert apply_tooth_position_aware_correction(candidates, 1, 7) == {ATOMS[1]}
+    assert apply_tooth_position_aware_correction(candidates, 0, 8) == {ATOMS[0]}
