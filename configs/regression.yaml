@@ -1,0 +1,8 @@
+task: regression
+head:
+  hidden_dim: 128
+  quantiles: [0.25, 0.50, 0.75]
+  retrieval_neighbors: 15
+  blend_retrieval: 0.75
+  blend_quantile: 0.25
+

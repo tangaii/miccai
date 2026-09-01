@@ -1,0 +1,9 @@
+task: multi_label_classification
+head:
+  hidden_dim: 128
+  event_count: 40
+  token_chunk: 16
+candidate_scoring:
+  row_batch_size: 4
+  candidate_cardinalities: [1, 2, 3, 4]
+

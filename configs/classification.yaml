@@ -1,0 +1,7 @@
+task: classification
+head:
+  folds: 3
+  hidden_dim: 128
+  dropout: 0.15
+  feature_dim: 2560
+
