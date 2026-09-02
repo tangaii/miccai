@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use R3-MedGemma, please cite the repository."
+title: "R3-MedGemma: Routing, Refinement, and Retrieval for Heterogeneous Medical Image Parsing"
+authors:
+  - family-names: Tang
+    given-names: Ai
+    email: s250231129@stu.cqupt.edu.cn
+version: 0.1.0
+repository-code: "https://github.com/tangaii/miccai"

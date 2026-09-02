@@ -1,11 +1,28 @@
-# Medical Image Parsing
+# R3-MedGemma
+
+Routing, Refinement, and Retrieval for Heterogeneous Medical Image Parsing
 
 Public research code for a three-task medical-image parsing pipeline. The
 repository contains the readable inference graph, component-wise fitting
 helpers, input/output contracts, local diagnostic metrics, and behavior tests.
 The MedGemma base model, LoRA adapters, fitted estimators, retrieval tables,
-competition data, and learned heads are external inputs and are not
+challenge data, and learned heads are external inputs and are not
 distributed here.
+
+## Paper overview
+
+R3-MedGemma is the paper name for the frozen four-module implementation:
+shared MedGemma backbone, task-routed semantic--generative classification,
+structured evidence-refined multi-label prediction, and multi-view
+retrieval--quantile regression. The locked development/frozen-validation
+artifact reports overall 0.483, classification balanced accuracy 0.846,
+multi-label F1 0.527, and regression MAE 11.99. These are frozen validation
+evidence; testing-set evaluation is not reported.
+
+The paper title is ``R3-MedGemma: Routing, Refinement, and Retrieval for
+Heterogeneous Medical Image Parsing''. The public repository contains the
+implementation and paper-to-code map; external weights, fitted heads,
+retrieval tables, and source data remain outside the repository.
 
 ## Method overview
 
@@ -129,6 +146,10 @@ is an MLC setting (scoring_row_batch_size=4). The full-logit path is only a
 capability fallback for wrappers that do not expose the decoder and uses the
 same final-logit soft-cap when one is declared. Alignment, shape, non-finite,
 and model errors are not silently converted into that fallback.
+
+The public implementation and a final deployment may use different but
+algebraically equivalent vocabulary-chunk schedules. The candidate-score
+definition and prediction semantics remain unchanged.
 
 ## Multi-View Retrieval–Quantile Regression
 
@@ -271,7 +292,7 @@ preparation steps documented in the checkpoint contract.
 training/adapters.py is a generic adapter-training utility. Its target
 modules, prompt supervision, and training arguments are configurable helper
 defaults; the repository does not claim that they exactly reproduce the
-external competition adapters.
+external challenge adapters.
 
 The files under configs/classification.yaml, configs/multilabel.yaml, and
 configs/regression.yaml are reference-only component contracts. Runtime
@@ -296,10 +317,10 @@ with the organizer-provided evaluator and its documented provenance.
 ## Scope and limitations
 
 The repository is a readable implementation and reproducibility contract, not a
-redistribution of the learned submission. Exact fitted values require the
+redistribution of the learned challenge artifact. Exact fitted values require the
 corresponding labeled source data, source splits, external MedGemma
 model/adapters, fitted estimators, and retrieval tables. The public code does
-not claim to reproduce a hidden leaderboard score from this repository alone.
+does not claim to reproduce an organizer score from this repository alone.
 
 Only source code, contracts, and tests are included; learned weights and
 restricted source data remain external.

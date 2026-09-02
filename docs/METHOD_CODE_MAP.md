@@ -1,7 +1,7 @@
-# Method-Code Map
+# R3-MedGemma Method-Code Map
 
 This document is the canonical paper-to-code map for the frozen public
-implementation. It has exactly four paper-level method modules. Detailed
+R3-MedGemma implementation. It has exactly four paper-level method modules. Detailed
 multi-label and regression operations are internal stages of sections 3.3 and
 3.4; validation, asset loading, training, and serialization remain
 implementation or reproducibility support.
@@ -46,6 +46,11 @@ implementation or reproducibility support.
 
 `configs/default.yaml` is the only runtime configuration source. Task YAML files
 are reference-only component contracts.
+
+The public implementation and a final deployment may schedule vocabulary rows
+differently for memory-bounded scoring. These schedules are algebraically
+equivalent and preserve the same candidate-score definition; this is not a
+prediction-semantic change.
 
 | Key | Default | Consumer | Meaning |
 | --- | ---: | --- | --- |
