@@ -14,10 +14,12 @@ distributed here.
 R3-MedGemma is the paper name for the frozen four-module implementation:
 shared MedGemma backbone, task-routed semantic--generative classification,
 structured evidence-refined multi-label prediction, and multi-view
-retrieval--quantile regression. The locked development/frozen-validation
-artifact reports overall 0.483, classification balanced accuracy 0.846,
-multi-label F1 0.527, and regression MAE 11.99. These are frozen validation
-evidence; testing-set evaluation is not reported.
+retrieval--quantile regression. The current R99 hidden-validation artifact
+contains 1,703 rows and records overall 0.483753 (rounded 0.4838),
+classification balanced accuracy 0.847607 (rounded 0.8476), multi-label F1
+0.526655 (rounded 0.5267), and regression MAE 11.987337 (rounded 11.9873).
+These are scorer-recorded validation evidence; final testing-set evaluation is
+pending and is not reported here.
 
 The paper title is ``R3-MedGemma: Routing, Refinement, and Retrieval for
 Heterogeneous Medical Image Parsing''. The public repository contains the
@@ -235,7 +237,7 @@ python inference.py --input .smoke/input.jsonl \
 pytest -q
 ~~~
 
-The code was revalidated on September 1, 2026 in the project environment with
+The code was revalidated on September 2, 2026 in the project environment with
 Python 3.12.3, NumPy 1.26.0, Pillow 12.2.0, PyYAML 6.0.3, SciPy 1.11.3,
 scikit-learn 1.3.2, joblib 1.1.1, PyTorch 2.9.0+ppu2.0.0, Transformers 5.2.0,
 PEFT 0.18.0, Accelerate 1.12.0, safetensors 0.7.0, CatBoost 1.2.10, and
@@ -320,7 +322,7 @@ The repository is a readable implementation and reproducibility contract, not a
 redistribution of the learned challenge artifact. Exact fitted values require the
 corresponding labeled source data, source splits, external MedGemma
 model/adapters, fitted estimators, and retrieval tables. The public code does
-does not claim to reproduce an organizer score from this repository alone.
+not claim to reproduce an organizer score from this repository alone.
 
 Only source code, contracts, and tests are included; learned weights and
 restricted source data remain external.
