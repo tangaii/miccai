@@ -11,6 +11,7 @@ features/
 outputs/
 logs/
 cache/
+.smoke/
 *.tar
 *.tar.gz
 *.zst
