@@ -10,9 +10,11 @@ import time
 from typing import Any
 
 from medical_parsing.config import AssetBundle, RuntimeConfig, load_config
+from medical_parsing.module_names import PAPER_MODULES
 from medical_parsing.models.backbone import configure_environment, set_determinism
 from medical_parsing.schema import (
     TASK_CLASSIFICATION,
+    TASK_DETECTION,
     TASK_MULTILABEL,
     TASK_REGRESSION,
     atomic_write_jsonl,
@@ -21,6 +23,7 @@ from medical_parsing.schema import (
     validate_output_rows,
 )
 from medical_parsing.tasks.classification import run_classification
+from medical_parsing.tasks.detection import run_detection
 from medical_parsing.tasks.multilabel import ATOMS, run_multilabel
 from medical_parsing.tasks.regression import run_regression
 
@@ -39,6 +42,8 @@ def _required_asset_names(tasks: set[str]) -> set[str]:
             "regression_visual_model", "regression_reference", "regression_residuals",
             "regression_quantile_head",
         })
+    if TASK_DETECTION in tasks:
+        required.add("detection_head")
     return required
 
 
@@ -66,7 +71,7 @@ def run_inference(
     audit_path: str | Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Run all task branches represented in an unlabeled input JSONL.
+    """Run all task modules represented in an unlabeled input JSONL.
 
     Base-model and fitted-task assets are intentionally arguments rather than
     package data.  A dry run checks the input and output contract without
@@ -80,6 +85,7 @@ def run_inference(
             model=config.model,
             multilabel=config.multilabel,
             regression=config.regression,
+            detection=config.detection,
             checkpoint_dir=Path(checkpoint_dir),
         )
     source = Path(input_path)
@@ -91,6 +97,7 @@ def run_inference(
         "status": "RUNNING",
         "rows": len(rows),
         "tasks": dict(Counter(row["task_type"] for row in rows)),
+        "paper_modules": dict(PAPER_MODULES),
         "determinism": set_determinism(config.model.seed),
         "assets": _asset_audit(assets, tasks),
     }
@@ -130,6 +137,11 @@ def run_inference(
             Path(regression_adapter_path), device, assets, config.model,
             audit.setdefault("regression", {}), regression_config=config.regression,
         ))
+    predictions.update(run_detection(
+        by_task[TASK_DETECTION], Path(base_path), Path(adapter_path), device,
+        assets, config.model, audit.setdefault("detection", {}),
+        detection_config=config.detection,
+    ))
     output_rows = [
         {"uid": row["uid"], "task_type": row["task_type"], "prediction": predictions[row["uid"]]}
         for row in rows

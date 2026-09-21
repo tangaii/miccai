@@ -1,8 +1,8 @@
-# R3-MedGemma
+# MedParse
 
-Routing, Refinement, and Retrieval for Heterogeneous Medical Image Parsing
+A task-specialized vision-language framework for medical image parsing
 
-Public research code for a three-task medical-image parsing pipeline. The
+Public research code for a four-task medical-image parsing pipeline. The
 repository contains the readable inference graph, component-wise fitting
 helpers, input/output contracts, local diagnostic metrics, and behavior tests.
 The MedGemma base model, LoRA adapters, fitted estimators, retrieval tables,
@@ -11,20 +11,19 @@ distributed here.
 
 ## Paper overview
 
-R3-MedGemma is the paper name for the frozen four-module implementation:
-shared MedGemma backbone, task-routed semantic--generative classification,
-structured evidence-refined multi-label prediction, and multi-view
-retrieval--quantile regression. The current R99 hidden-validation artifact
+The implementation is organized into five paper-level modules: Shared MedGemma
+Representation Interface, Task-Routed Classification, Evidence-Guided Set
+Decoding, Frozen Spatial Query Decoding, and Retrieval-Refined Quantile
+Regression. The current source-locked hidden-validation artifact
 contains 1,703 rows and records overall 0.483753 (rounded 0.4838),
 classification balanced accuracy 0.847607 (rounded 0.8476), multi-label F1
 0.526655 (rounded 0.5267), and regression MAE 11.987337 (rounded 11.9873).
 These are scorer-recorded validation evidence; final testing-set evaluation is
 pending and is not reported here.
 
-The paper title is ``R3-MedGemma: Routing, Refinement, and Retrieval for
-Heterogeneous Medical Image Parsing''. The public repository contains the
-implementation and paper-to-code map; external weights, fitted heads,
-retrieval tables, and source data remain outside the repository.
+The public repository contains the implementation and paper-to-code map;
+external weights, fitted heads, retrieval tables, and source data remain
+outside the repository.
 
 ## Method overview
 
@@ -37,17 +36,20 @@ states and are never silently stacked.
 
 The paper-level modules are:
 
-1. Unified Framework and Shared MedGemma Backbone — prompt rendering,
+1. Shared MedGemma Representation Interface — prompt rendering,
    generation, raw projected image-token extraction, decoder access, and
    single-adapter loading.
-2. Task-Routed Semantic–Generative Classification — a route manifest selects
+2. Task-Routed Classification — a route manifest selects
    the semantic image-token head, direct prompt generation, or instructional
    generation fallback.
-3. Structured Evidence-Refined Multi-Label Prediction — an initial generated
+3. Evidence-Guided Set Decoding — an initial generated
    set is refined using parser-native singleton evidence, candidate selection,
    listwise re-ranking, atom/cardinality probability models, a
    token-conditioned residual head, and GFM decoding.
-4. Multi-View Retrieval–Quantile Regression — adaptive image views, visual and
+4. Frozen Spatial Query Decoding — primary-adapter image tokens and the final
+   non-padding decoder state feed the frozen spatial query decoder; no
+   coordinate text is generated.
+5. Retrieval-Refined Quantile Regression — adaptive image views, visual and
    intensity-edge geometry representations, visual and generated estimates,
    cross-group retrieval, residual correction, and a spatial quantile head are
    fused into the bounded numeric output.
@@ -57,7 +59,7 @@ The complete paper-to-code table is in
 use the same formal names; compatibility aliases are called out where they
 preserve the original Python API or serialized feature contract.
 
-## Unified Framework and Shared MedGemma Backbone
+## Shared MedGemma Representation Interface
 
 load_raw_bundle loads the external base model for raw visual features.
 load_adapter_bundle loads exactly one PEFT LoRA adapter for one task state,
@@ -70,7 +72,8 @@ The runtime therefore follows this state contract:
 - raw base state: used for semantic image-token extraction and regression
   multi-view visual features;
 - primary adapter state: used for classification generation, multi-label
-  generation/scoring, and the regression spatial-token branch;
+  generation/scoring, the regression spatial-token branch, and Detection
+  feature extraction;
 - regression adapter state: used only for the generated numeric regression
   estimate.
 
@@ -85,7 +88,7 @@ controls. PyTorch is called with warn_only=True, so this is a
 determinism-control setting rather than a claim of bitwise identity on every
 hardware/software stack.
 
-## Task-Routed Semantic–Generative Classification
+## Task-Routed Classification
 
 The route manifest is normalized to these formal internal routes:
 
@@ -109,7 +112,7 @@ map_semantic_concept_to_option keep the semantic ontology separate from
 row-specific option letters. Every output is checked against the legal options
 parsed from that row.
 
-## Structured Evidence-Refined Multi-Label Prediction
+## Evidence-Guided Set Decoding
 
 The fixed parser vocabulary contains ten legal atoms. The formal atom groups
 are SEMANTIC_LABEL_ATOMS and AUXILIARY_LABEL_ATOMS; the old SEMANTIC and PSEUDO
@@ -153,7 +156,28 @@ The public implementation and a final deployment may use different but
 algebraically equivalent vocabulary-chunk schedules. The candidate-score
 definition and prediction semantics remain unchanged.
 
-## Multi-View Retrieval–Quantile Regression
+## Frozen Spatial Query Decoding
+
+`run_detection` implements Frozen Spatial Query Decoding by reusing the primary
+adapter's `pooler_output` image tokens and the final hidden state at the last
+non-padding input position.  Its implementation class,
+`FrozenSpatialQueryDecoder`, has two width-256 Transformer decoder layers, eight
+attention heads, one learned object query in the released asset, and separate
+box/presence heads.  It predicts normalized `(cx, cy, width, height)` boxes,
+keeps boxes with presence probability at least 0.5, converts them to the
+original image coordinates, and serializes a compact JSON list.
+
+The frozen inference path uses 896 x 896 preprocessing and a feature batch size
+of 8.  These values are fixed because BF16 feature extraction can be
+batch-dependent on some GPU kernels.
+
+The frozen head is an external asset named `spatial_query_decoder.pt`; the exact feature
+cache and training path are documented in
+[checkpoints/README.md](checkpoints/README.md).  Detection is integrated into
+the same canonical input/output pipeline but remains a separate study from
+the original three-task leaderboard result.
+
+## Retrieval-Refined Quantile Regression
 
 build_adaptive_image_views keeps the frozen crop policy: wide and tall images
 produce the original plus three crops; near-square images produce the original
@@ -169,7 +193,7 @@ bands for each of three channels.
 The formal numerical chain is:
 
 ~~~
-generated_numeric_estimate = numeric generation branch
+generated_numeric_estimate = numeric generation path
 visual_regression_estimate = fitted visual estimator
 base_fused_estimate = 0.5 * generated_numeric_estimate
                        + 0.5 * visual_regression_estimate
@@ -211,8 +235,8 @@ Prediction output is canonical JSONL with exactly:
 ~~~
 
 The output validator checks UID order, task identity, legal classification
-letters, legal multi-label atoms, finite regression values, and the [0, 100]
-regression range.
+letters, legal multi-label atoms, finite ordered Detection boxes, finite
+regression values, and the [0, 100] regression range.
 
 ## Quick start
 
@@ -237,12 +261,14 @@ python inference.py --input .smoke/input.jsonl \
 pytest -q
 ~~~
 
-The code was revalidated on September 2, 2026 in the project environment with
+The code was revalidated on September 14, 2026 in the project environment with
 Python 3.12.3, NumPy 1.26.0, Pillow 12.2.0, PyYAML 6.0.3, SciPy 1.11.3,
 scikit-learn 1.3.2, joblib 1.1.1, PyTorch 2.9.0+ppu2.0.0, Transformers 5.2.0,
 PEFT 0.18.0, Accelerate 1.12.0, safetensors 0.7.0, CatBoost 1.2.10, and
-pytest 7.2.0. CUDA was available with CUDA 12.9. Other stacks may produce
-small floating-point differences.
+pytest 7.2.0. CUDA was available with CUDA 12.9. The Frozen Spatial Query
+Decoding module was also replayed against the frozen reference runner with 175/175
+exact serialized outputs. Other stacks may produce small floating-point
+differences.
 
 For actual inference, keep all learned assets outside this repository and
 pass their directory explicitly:
@@ -259,18 +285,20 @@ python inference.py \
   --audit-json run-audit.json
 ~~~
 
-The regression adapter is required only when regression rows are present. See
-checkpoints/README.md for the exact asset contract.
+The regression adapter is required only when regression rows are present. The
+primary adapter and `spatial_query_decoder.pt` are required when Detection rows are
+present. See checkpoints/README.md for the exact asset contract.
 
 ## Training and fitting
 
-The public fitting APIs cover the following components:
+The public fitting APIs cover the following implementation components:
 
-- classification-head — three-fold semantic image-token heads;
-- multilabel-selector-ranker — candidate selector and listwise ranker;
-- multilabel-probability-models — 40 atom/cardinality probability models;
-- multilabel-residual-head — token-conditioned residual probability head;
-- regression-visual-estimator — visual estimator with scaler/PCA;
+- classification-head — implementation component of Task-Routed Classification;
+- detection-head — implementation component of Frozen Spatial Query Decoding;
+- multilabel-selector-ranker — candidate selector and listwise ranker for Evidence-Guided Set Decoding;
+- multilabel-probability-models — atom/cardinality probability models for Evidence-Guided Set Decoding;
+- multilabel-residual-head — token-conditioned residual probability head for Evidence-Guided Set Decoding;
+- regression-visual-estimator — visual estimator with scaler/PCA for Retrieval-Refined Quantile Regression;
 - regression-reference — cross-group retrieval table and transforms;
 - regression-residuals — UID-aligned cross-fitted residual table;
 - regression-quantile-head — spatial quantile head and geometry transforms.
@@ -284,6 +312,10 @@ python train.py --component classification-head \
 
 python train.py --component regression-visual-estimator \
   --features visual_features.npz --output regression_visual_model.joblib
+
+python train.py --component detection-head \
+  --features detection_features.npz --targets detection_targets.json \
+  --output spatial_query_decoder.pt
 ~~~
 
 The legacy --task interface remains supported and infers a component from NPZ
@@ -304,7 +336,8 @@ configuration source.
 ## Evaluation
 
 evaluate.py reports diagnostic/local classification accuracy, multi-label exact
-match and micro/sample F1, and regression MAE/RMSE/bias:
+match and micro/sample F1, Detection IoU-0.5 precision/recall/F1, and
+regression MAE/RMSE/bias:
 
 ~~~
 python evaluate.py --reference labeled_reference.jsonl \
@@ -337,9 +370,9 @@ docs/METHOD_CODE_MAP.md   Paper Method to code/symbol mapping
 src/medical_parsing/      Package code
   data/                   Inference manifest preparation
   evaluation/              Diagnostic/local metrics
-  inference/              Three-branch orchestration
+  inference/              Four-task-module orchestration
   models/                 Backbone and paper-locatable neural modules
-  tasks/                  Classification, multi-label, and regression logic
+  tasks/                  Classification, Detection, multi-label, and regression logic
   training/               Component fitting and generic LoRA utility
 tests/                    Contract and behavior tests
 inference.py              Public inference entry point

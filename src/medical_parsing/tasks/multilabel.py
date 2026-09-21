@@ -1,6 +1,6 @@
-"""Structured multi-label prediction and memory-efficient evidence scoring.
+"""Evidence-Guided Set Decoding and memory-efficient evidence scoring.
 
-The branch deliberately keeps the vocabulary, candidate ordering, feature
+The module deliberately keeps the vocabulary, candidate ordering, feature
 layouts, and GFM decoder as small named functions.  This makes the public
 implementation auditable and lets the tests compare the memory-efficient
 teacher-forced scorer with a reference full-logit implementation.

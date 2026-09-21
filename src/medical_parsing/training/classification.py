@@ -1,4 +1,4 @@
-"""Fit the semantic classification head pack from cached image tokens."""
+"""Fit the semantic component of Task-Routed Classification."""
 
 from __future__ import annotations
 

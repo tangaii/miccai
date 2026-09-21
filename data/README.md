@@ -15,11 +15,13 @@ The public input schema is JSONL with one object per row:
 }
 ```
 
-Supported tasks are `classification`, `multi_label_classification`, and
-`regression`.  Each row needs a unique `uid`, a dataset/source name, exactly
-one local image reference, and a prompt or question.  Inputs must not contain
-answer, target, label, reference, or prediction fields.  The validator rejects
-multi-image rows because all final task branches consume one image per row.
+Supported tasks are `classification`, `detection`,
+`multi_label_classification`, and `regression`.  Each row needs a unique `uid`,
+a dataset/source name, exactly one local image reference, and a prompt or
+question.  Inputs must not contain answer, target, label, reference, or
+prediction fields.  The validator rejects multi-image rows because all final
+task modules consume one image per row.  Detection predictions are compact
+JSON lists of original-image `[x1,y1,x2,y2]` boxes; empty lists are legal.
 
 `scripts/prepare_data.py` is an inference-manifest preparation tool only.  It
 normalizes unlabeled records and deliberately rejects training labels.  It is

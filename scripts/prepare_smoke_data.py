@@ -47,14 +47,24 @@ def main() -> int:
     specs = [
         ("smoke-cls", "bone_marrow", "Question: based on the image, which condition is shown? Options: " + " ".join(choices)),
         ("smoke-mlc", "dental", MLC_PROMPT),
+        (
+            "smoke-det",
+            "ultrasound",
+            "Return all lesion boxes as [x1,y1,x2,y2] in original-image pixels; return [] when none are visible.",
+        ),
         ("smoke-reg", "measurement", "Return the requested numeric measurement in the image."),
     ]
     for index, (uid, dataset, prompt) in enumerate(specs):
         image_path = args.output_dir / f"{uid}.png"
         _image(image_path, index)
         rows.append({
-            "uid": uid, "task_type": {"smoke-cls": "classification", "smoke-mlc": "multi-label classification", "smoke-reg": "regression"}[uid],
-            "dataset": dataset, "prompt": prompt, "question": prompt, "images": [str(image_path)],
+            "uid": uid, "task_type": {
+                "smoke-cls": "classification",
+                "smoke-mlc": "multi-label classification",
+                "smoke-det": "detection",
+                "smoke-reg": "regression",
+            }[uid],
+            "dataset": dataset, "prompt": prompt, "question": prompt, "images": [image_path.name],
         })
     input_path = args.output_dir / "input.jsonl"
     atomic_write_jsonl(input_path, rows)

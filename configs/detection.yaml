@@ -1,0 +1,26 @@
+# Reference-only spatial query decoder fitting contract. Runtime defaults are read from
+# configs/default.yaml; train.py selects the component explicitly.
+task: detection
+component: detection-head
+fixed_method_contract:
+  image_size: 896
+  feature_batch_size: 8
+  image_token_shape: [256, 2560]
+  query_state_shape: [2560]
+  vision_dim: 2560
+  hidden_dim: 256
+  attention_heads: 8
+  decoder_layers: 2
+  decoder_ffn_dim: 1024
+  dropout: 0.1
+  max_queries: 4
+  seed: 20260908
+  epochs: 30
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  presence_threshold: 0.5
+  matching: Hungarian L1(cxcywh)+2*(1-GIoU)
+  loss: 5*SmoothL1+2*(1-GIoU)+BCE(presence)

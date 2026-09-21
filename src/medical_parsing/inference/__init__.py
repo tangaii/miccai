@@ -1,4 +1,4 @@
-"""Inference orchestration for the three task branches."""
+"""Inference orchestration for the four task modules."""
 
 from .pipeline import run_inference
 

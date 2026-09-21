@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use R3-MedGemma, please cite the repository."
-title: "R3-MedGemma: Routing, Refinement, and Retrieval for Heterogeneous Medical Image Parsing"
+message: "If you use MedParse, please cite the repository."
+title: "MedParse: A Task-Specialized Vision-Language Framework for Medical Image Parsing"
 authors:
   - family-names: Tang
     given-names: Ai

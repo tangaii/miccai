@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the public three-branch inference pipeline."""
+"""Run the public four-task-module inference pipeline."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from medical_parsing.inference import run_inference  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run classification, multi-label, and regression inference.")
+    parser = argparse.ArgumentParser(description="Run the classification, Detection, multi-label, and regression modules.")
     parser.add_argument("--input", required=True, type=Path, help="unlabeled JSONL/JSON input")
     parser.add_argument("--output", required=True, type=Path, help="canonical prediction JSONL")
     parser.add_argument("--config", type=Path, default=REPO_ROOT / "configs" / "default.yaml")

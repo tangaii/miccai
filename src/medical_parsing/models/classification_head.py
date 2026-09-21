@@ -1,4 +1,4 @@
-"""Semantic image-token classification head and task ontology."""
+"""Semantic image-token component of Task-Routed Classification."""
 
 from __future__ import annotations
 

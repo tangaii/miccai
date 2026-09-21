@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "medical-image-parsing"
 version = "0.1.0"
-description = "R3-MedGemma research code for heterogeneous medical image parsing with task-specific prediction branches."
+description = "Research code for heterogeneous medical image parsing with five paper-level method modules."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -13,8 +13,12 @@ def test_config_and_external_asset_names():
     assert config.multilabel.scoring_row_batch_size == 4
     assert config.regression.retrieval_neighbors == 15
     assert config.regression.quantiles == (0.25, 0.5, 0.75)
+    assert config.detection.presence_threshold == 0.5
+    assert config.detection.seed == 20260908
+    assert config.detection.head_dim == 256
     bundle = AssetBundle(Path("external-checkpoints-that-do-not-exist"))
     assert bundle.path("classification_heads").name == "classification_heads.pt"
+    assert bundle.path("detection_head").name == "spatial_query_decoder.pt"
     assert len(bundle.missing()) == len(ASSET_FILENAMES)
 
 

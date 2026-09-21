@@ -1,4 +1,4 @@
-"""Fit multi-label candidate models and the residual probability head."""
+"""Fit components used by Evidence-Guided Set Decoding."""
 
 from __future__ import annotations
 

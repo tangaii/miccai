@@ -1,4 +1,4 @@
-"""Continuous regression branch with retrieval, correction, and quantiles."""
+"""Retrieval-Refined Quantile Regression with correction and multi-view inputs."""
 
 from __future__ import annotations
 

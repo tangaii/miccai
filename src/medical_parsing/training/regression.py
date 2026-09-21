@@ -1,4 +1,4 @@
-"""Fit regression-side estimators and the spatial quantile head."""
+"""Fit components used by Retrieval-Refined Quantile Regression."""
 
 from __future__ import annotations
 

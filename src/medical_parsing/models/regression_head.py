@@ -1,4 +1,4 @@
-"""Spatial quantile refinement head."""
+"""Spatial quantile head used by Retrieval-Refined Quantile Regression."""
 
 from __future__ import annotations
 

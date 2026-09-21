@@ -14,7 +14,14 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from medical_parsing.config import DetectionConfig  # noqa: E402
 from medical_parsing.training.classification import train_semantic_heads  # noqa: E402
+from medical_parsing.training.detection import (  # noqa: E402
+    detection_feature_uids,
+    load_detection_targets,
+    train_detection_head,
+    validate_detection_feature_metadata,
+)
 from medical_parsing.training.multilabel import (  # noqa: E402
     fit_candidate_models,
     fit_probability_models,
@@ -30,6 +37,7 @@ from medical_parsing.training.regression import (  # noqa: E402
 
 COMPONENTS = (
     "classification-head",
+    "detection-head",
     "multilabel-selector-ranker",
     "multilabel-probability-models",
     "multilabel-residual-head",
@@ -54,12 +62,16 @@ def _infer_component(task: str | None, arrays: dict[str, np.ndarray]) -> str:
         if "row_features" in arrays:
             return "multilabel-residual-head"
         return "multilabel-probability-models"
+    if task == "detection":
+        return "detection-head"
     if task == "regression":
         if {"visual_features", "geometry", "uids", "groups"}.issubset(arrays):
             return "regression-reference"
         if {"tokens", "geometry"}.issubset(arrays):
             return "regression-quantile-head"
         return "regression-visual-estimator"
+    if {"image_tokens", "query_states"}.issubset(arrays):
+        return "detection-head"
     raise ValueError("--component is required when --task is omitted")
 
 
@@ -71,29 +83,78 @@ def _require(arrays: dict[str, np.ndarray], *names: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fit one named public method component from prepared arrays.")
-    parser.add_argument("--task", choices=("classification", "multilabel", "regression"), default=None,
+    parser.add_argument("--task", choices=("classification", "detection", "multilabel", "regression"), default=None,
                         help="legacy task selector; component inference remains supported")
     parser.add_argument("--component", choices=COMPONENTS, default=None,
                         help="explicit paper component; preferred over implicit NPZ-key dispatch")
     parser.add_argument("--features", required=True, type=Path, help="NPZ feature/target archive")
     parser.add_argument("--labels", type=Path, default=None, help="JSONL labels for semantic classification")
+    parser.add_argument(
+        "--targets", type=Path, default=None,
+        help="JSON normalized Detection targets: [row][box][cx,cy,width,height]",
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--secondary-output", type=Path, default=None, help="second estimator output for fitting pairs")
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", default=None, help="torch device for neural components")
+    parser.add_argument("--epochs", type=int, default=None, help="override a neural component's epoch count")
+    parser.add_argument("--batch-size", type=int, default=None, help="override a neural component's batch size")
+    parser.add_argument("--learning-rate", type=float, default=None)
+    parser.add_argument("--weight-decay", type=float, default=None)
+    parser.add_argument("--warmup-ratio", type=float, default=None)
+    parser.add_argument("--max-grad-norm", type=float, default=None)
+    parser.add_argument(
+        "--max-queries", type=int, default=None,
+        help="maximum spatial-query decoder object queries",
+    )
     args = parser.parse_args()
     arrays = _load(args.features)
     component = args.component or _infer_component(args.task, arrays)
     if args.task is not None:
         expected_prefix = {
             "classification": "classification-",
+            "detection": "detection-",
             "multilabel": "multilabel-",
             "regression": "regression-",
         }[args.task]
         if not component.startswith(expected_prefix):
             raise ValueError(f"--task {args.task!r} is incompatible with --component {component!r}")
 
-    if component == "classification-head":
+    selected_seed = 0 if args.seed is None else args.seed
+    if component == "detection-head":
+        if args.targets is None:
+            raise ValueError("--targets JSON is required for detection-head")
+        image_key = "image_tokens" if "image_tokens" in arrays else "tokens"
+        _require(arrays, image_key, "query_states")
+        image_tokens = arrays[image_key]
+        validate_detection_feature_metadata(arrays, len(image_tokens))
+        feature_uids = detection_feature_uids(arrays, len(image_tokens))
+        targets = load_detection_targets(
+            args.targets,
+            expected_rows=len(image_tokens),
+            expected_uids=feature_uids,
+        )
+        detection = DetectionConfig()
+        result = train_detection_head(
+            image_tokens,
+            arrays["query_states"],
+            targets,
+            args.output,
+            epochs=args.epochs if args.epochs is not None else detection.epochs,
+            batch_size=args.batch_size if args.batch_size is not None else detection.batch_size,
+            learning_rate=args.learning_rate if args.learning_rate is not None else detection.learning_rate,
+            weight_decay=args.weight_decay if args.weight_decay is not None else detection.weight_decay,
+            warmup_ratio=args.warmup_ratio if args.warmup_ratio is not None else detection.warmup_ratio,
+            max_grad_norm=args.max_grad_norm if args.max_grad_norm is not None else detection.max_grad_norm,
+            seed=detection.seed if args.seed is None else args.seed,
+            device=args.device,
+            max_queries=args.max_queries if args.max_queries is not None else detection.max_queries,
+            presence_threshold=detection.presence_threshold,
+            box_loss_weight=detection.box_loss_weight,
+            matching_giou_weight=detection.matching_giou_weight,
+            presence_loss_weight=detection.presence_loss_weight,
+        )
+    elif component == "classification-head":
         if args.labels is None:
             raise ValueError("--labels JSONL is required for classification")
         _require(arrays, "tokens")
@@ -101,7 +162,7 @@ def main() -> int:
         result = train_semantic_heads(
             arrays["tokens"], [row["dataset"] for row in labels],
             [row["slot"] for row in labels], [row["label"] for row in labels],
-            args.output, seed=args.seed, device=args.device,
+            args.output, seed=selected_seed, device=args.device,
         )
     elif component == "multilabel-selector-ranker":
         if args.secondary_output is None:
@@ -110,16 +171,16 @@ def main() -> int:
         result = fit_candidate_models(
             arrays["selector_features"], arrays["selector_targets"],
             arrays["ranker_features"], arrays["ranker_targets"],
-            args.output, args.secondary_output, ranker_groups=arrays.get("ranker_groups"), seed=args.seed,
+            args.output, args.secondary_output, ranker_groups=arrays.get("ranker_groups"), seed=selected_seed,
         )
     elif component == "multilabel-probability-models":
         _require(arrays, "features", "targets")
-        result = fit_probability_models(arrays["features"], arrays["targets"], args.output, seed=args.seed)
+        result = fit_probability_models(arrays["features"], arrays["targets"], args.output, seed=selected_seed)
     elif component == "multilabel-residual-head":
         _require(arrays, "tokens", "row_features", "base_probability", "targets")
         result = train_multilabel_residual_head(
             arrays["tokens"], arrays["row_features"], arrays["base_probability"],
-            arrays["targets"], args.output, seed=args.seed, device=args.device,
+            arrays["targets"], args.output, seed=selected_seed, device=args.device,
         )
     elif component == "regression-reference":
         _require(arrays, "visual_features", "geometry", "targets", "uids", "groups")
@@ -136,11 +197,11 @@ def main() -> int:
         _require(arrays, "tokens", "geometry", "targets")
         result = train_quantile_head(
             arrays["tokens"], arrays["geometry"], arrays["targets"], args.output,
-            seed=args.seed, device=args.device,
+            seed=selected_seed, device=args.device,
         )
     elif component == "regression-visual-estimator":
         _require(arrays, "visual_features", "targets")
-        result = fit_visual_regressor(arrays["visual_features"], arrays["targets"], args.output, seed=args.seed)
+        result = fit_visual_regressor(arrays["visual_features"], arrays["targets"], args.output, seed=selected_seed)
     else:  # pragma: no cover - argparse constrains this branch
         raise ValueError(f"unsupported training component: {component}")
     result = dict(result)

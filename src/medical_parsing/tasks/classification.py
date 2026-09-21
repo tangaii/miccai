@@ -1,4 +1,4 @@
-"""Disease-diagnosis classification branch with explicit semantic routing."""
+"""Task-Routed Classification with explicit semantic routing."""
 
 from __future__ import annotations
 

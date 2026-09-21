@@ -1,4 +1,4 @@
-"""MedGemma loading, prompt rendering, and visual feature extraction."""
+"""Shared MedGemma Representation Interface implementation."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ TASK_INSTRUCTIONS = {
         "You are given a medical image. Identify all applicable findings or labels. "
         "Return labels separated by semicolons. Return an empty string if none apply."
     ),
+    "detection": "You are given a medical image. Return detections exactly in the coordinate format requested by the question.",
     "regression": "You are given a medical image. Return only the requested numeric measurement.",
 }
 

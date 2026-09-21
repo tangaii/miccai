@@ -22,5 +22,25 @@ regression:
   quantiles: [0.25, 0.50, 0.75]
   geometry_pca_components: 64
 
+detection:
+  presence_threshold: 0.5
+  vision_dim: 2560
+  head_dim: 256
+  attention_heads: 8
+  decoder_layers: 2
+  decoder_ffn_dim: 1024
+  dropout: 0.1
+  max_queries: 4
+  seed: 20260908
+  epochs: 30
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  matching_giou_weight: 2.0
+  box_loss_weight: 5.0
+  presence_loss_weight: 1.0
+
 paths:
   checkpoint_dir: checkpoints

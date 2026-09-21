@@ -6,8 +6,10 @@ import hashlib
 import io
 import json
 import math
+from numbers import Real
 from pathlib import Path
 import re
+from collections.abc import Mapping
 from typing import Any, Iterable
 import unicodedata
 import zipfile
@@ -17,14 +19,20 @@ from PIL import Image, ImageOps
 
 TASK_CLASSIFICATION = "classification"
 TASK_MULTILABEL = "multi-label classification"
+TASK_DETECTION = "detection"
 TASK_REGRESSION = "regression"
-SUPPORTED_TASKS = {TASK_CLASSIFICATION, TASK_MULTILABEL, TASK_REGRESSION}
+SUPPORTED_TASKS = {TASK_CLASSIFICATION, TASK_MULTILABEL, TASK_DETECTION, TASK_REGRESSION}
 LABEL_KEYS = {
     "answer", "raw_answer", "target", "reference", "label", "ground_truth", "gold",
     "gold_answer", "target_value", "raw_target", "prediction", "pred", "output",
     "labels", "answers", "gold_labels",
 }
 CHOICE_MARKER = re.compile(r"(?<![A-Za-z])([A-K])\s*[:.)]\s*", re.IGNORECASE)
+DETECTION_BOX_FIELDS = (
+    "bbox", "bboxes", "box", "boxes", "bounding_box", "bounding_boxes", "detections",
+)
+DETECTION_EMPTY_LABELS = {"", "none", "no finding", "no findings", "n/a", "na", "null", "[]"}
+DetectionBox = tuple[float, float, float, float, str | None]
 
 
 def maybe_json(value: Any) -> Any:
@@ -52,6 +60,8 @@ def canonical_task(value: Any) -> str:
         return TASK_CLASSIFICATION
     if key in {"multi label classification", "multi-label classification", "multilabel", "multi label", "multi_label"}:
         return TASK_MULTILABEL
+    if key in {"detection", "instance detection", "instance-detection", "det"}:
+        return TASK_DETECTION
     if key == TASK_REGRESSION:
         return TASK_REGRESSION
     raise ValueError(f"unsupported task_type={value!r}")
@@ -219,6 +229,116 @@ def prepared_image(uri: str, image_size: int = 896) -> Image.Image:
     return load_image(uri).resize((image_size, image_size), Image.Resampling.BICUBIC)
 
 
+def _detection_first_present(value: Mapping[str, Any], names: tuple[str, ...]) -> Any:
+    for name in names:
+        if name in value:
+            return value[name]
+    return None
+
+
+def _is_detection_number(value: Any) -> bool:
+    return isinstance(value, Real) and not isinstance(value, bool)
+
+
+def parse_detection_bbox(
+    numbers: Iterable[Any],
+    label: str | None = None,
+    *,
+    xyxy: bool = True,
+) -> DetectionBox:
+    values = list(numbers)
+    if len(values) != 4:
+        raise ValueError(f"expected four bbox numbers, got {values}")
+    try:
+        a, b, c, d = [float(value) for value in values]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"bbox contains a non-numeric value: {values}") from exc
+    if xyxy:
+        return (a, b, c, d, normalize_text(label) or None)
+    return (a, b, a + c, b + d, normalize_text(label) or None)
+
+
+def parse_detection_boxes(value: Any) -> list[DetectionBox]:
+    """Parse the organizer-compatible detection box representations.
+
+    The parser accepts compact JSON lists, ``[x1,y1,x2,y2]`` text, common
+    ``xyxy``/``xywh`` mappings, nested lists, and optional labels.  It does
+    not impose image dimensions; the output validator applies the stricter
+    finite, non-negative, ordered-box contract.
+    """
+
+    value = maybe_json(value)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or normalize_text(text) in DETECTION_EMPTY_LABELS:
+            return []
+        parsed = maybe_json(text)
+        if parsed is not value:
+            return parse_detection_boxes(parsed)
+        groups = re.findall(r"\[\s*([-+0-9eE.,\s]+)\]", text)
+        boxes: list[DetectionBox] = []
+        for group in groups:
+            numbers = [item.strip() for item in group.split(",") if item.strip()]
+            boxes.append(parse_detection_bbox(numbers))
+        if boxes:
+            return boxes
+        raise ValueError(f"could not parse detection boxes from string: {value!r}")
+    if isinstance(value, Mapping):
+        label = _detection_first_present(value, ("label", "class", "category", "name"))
+        if all(key in value for key in ("x1", "y1", "x2", "y2")):
+            return [parse_detection_bbox(
+                [value["x1"], value["y1"], value["x2"], value["y2"]], label,
+            )]
+        if all(key in value for key in ("x", "y", "width", "height")):
+            return [parse_detection_bbox(
+                [value["x"], value["y"], value["width"], value["height"]], label, xyxy=False,
+            )]
+        for key in DETECTION_BOX_FIELDS:
+            if key in value:
+                boxes = parse_detection_boxes(value[key])
+                if label is not None:
+                    normalized_label = normalize_text(label) or None
+                    return [
+                        (box[0], box[1], box[2], box[3], box[4] or normalized_label)
+                        for box in boxes
+                    ]
+                return boxes
+        boxes = []
+        for item_label, item_value in value.items():
+            normalized_label = normalize_text(item_label) or None
+            boxes.extend(
+                (box[0], box[1], box[2], box[3], box[4] or normalized_label)
+                for box in parse_detection_boxes(item_value)
+            )
+        return boxes
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return []
+        if len(value) == 4 and all(_is_detection_number(item) for item in value):
+            return [parse_detection_bbox(value)]
+        boxes: list[DetectionBox] = []
+        for item in value:
+            boxes.extend(parse_detection_boxes(item))
+        return boxes
+    raise ValueError(f"unsupported detection value: {value!r}")
+
+
+def validate_detection_boxes(value: Any) -> list[DetectionBox]:
+    """Validate a serialized prediction without assuming a particular image size."""
+
+    boxes = parse_detection_boxes(value)
+    for box in boxes:
+        coordinates = box[:4]
+        if not all(math.isfinite(float(item)) for item in coordinates):
+            raise ValueError(f"detection box contains a non-finite coordinate: {box}")
+        x1, y1, x2, y2 = coordinates
+        if x1 < 0 or y1 < 0 or x2 < 0 or y2 < 0 or x2 <= x1 or y2 <= y1:
+            raise ValueError(f"detection box is not non-negative and ordered: {box}")
+    return boxes
+
+
 def atomic_write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -250,6 +370,11 @@ def validate_output_rows(input_rows: list[dict[str, Any]], output_rows: list[dic
             labels = parse_label_set(prediction)
             if not labels.issubset(atoms):
                 raise ValueError(f"illegal multi-label atoms for {record['uid']}: {sorted(labels - atoms)}")
+        elif source["task_type"] == TASK_DETECTION:
+            try:
+                validate_detection_boxes(prediction)
+            except ValueError as exc:
+                raise ValueError(f"illegal detection prediction for {record['uid']}: {exc}") from exc
         else:
             value = float(prediction)
             if not math.isfinite(value) or not 0.0 <= value <= 100.0:
@@ -287,8 +412,10 @@ def parse_label_set(value: Any) -> set[str]:
 
 __all__ = [
     "CHOICE_MARKER", "LABEL_KEYS", "SUPPORTED_TASKS", "TASK_CLASSIFICATION",
-    "TASK_MULTILABEL", "TASK_REGRESSION", "atomic_write_jsonl", "canonical_task",
+    "TASK_DETECTION", "TASK_MULTILABEL", "TASK_REGRESSION", "DetectionBox",
+    "DETECTION_BOX_FIELDS", "DETECTION_EMPTY_LABELS", "atomic_write_jsonl", "canonical_task",
     "image_sha", "load_image", "maybe_json", "normalize_image_ref", "normalize_text",
-    "parse_choices", "parse_label_set", "prepared_image", "read_records", "row_image_refs",
-    "single_image_ref", "uri_bytes", "validate_input_rows", "validate_output_rows",
+    "parse_choices", "parse_detection_bbox", "parse_detection_boxes", "parse_label_set",
+    "prepared_image", "read_records", "row_image_refs", "single_image_ref", "uri_bytes",
+    "validate_detection_boxes", "validate_input_rows", "validate_output_rows",
 ]

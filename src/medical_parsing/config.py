@@ -45,7 +45,7 @@ class MultilabelConfig:
 
 @dataclass(frozen=True)
 class RegressionConfig:
-    """Frozen/default constants for the multi-view regression branch."""
+    """Frozen/default constants for Retrieval-Refined Quantile Regression."""
 
     retrieval_neighbors: int = 15
     generated_fusion_weight: float = 0.5
@@ -59,11 +59,50 @@ class RegressionConfig:
 
 
 @dataclass(frozen=True)
+class DetectionConfig:
+    """Frozen spatial-query decoder contract."""
+
+    presence_threshold: float = 0.5
+    vision_dim: int = 2560
+    head_dim: int = 256
+    attention_heads: int = 8
+    decoder_layers: int = 2
+    decoder_ffn_dim: int = 1024
+    dropout: float = 0.1
+    max_queries: int = 4
+    seed: int = 20260908
+    epochs: int = 30
+    batch_size: int = 256
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-4
+    warmup_ratio: float = 0.05
+    max_grad_norm: float = 1.0
+    matching_giou_weight: float = 2.0
+    box_loss_weight: float = 5.0
+    presence_loss_weight: float = 1.0
+
+    # Short aliases keep the configuration compatible with earlier descriptive
+    # component contracts without duplicating configuration keys.
+    @property
+    def hidden(self) -> int:
+        return self.head_dim
+
+    @property
+    def heads(self) -> int:
+        return self.attention_heads
+
+    @property
+    def decoder_feedforward_dim(self) -> int:
+        return self.decoder_ffn_dim
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     multilabel: MultilabelConfig = field(default_factory=MultilabelConfig)
     regression: RegressionConfig = field(default_factory=RegressionConfig)
     checkpoint_dir: Path = Path("checkpoints")
+    detection: DetectionConfig = field(default_factory=DetectionConfig)
 
 
 ASSET_FILENAMES: dict[str, str] = {
@@ -79,6 +118,7 @@ ASSET_FILENAMES: dict[str, str] = {
     "regression_reference": "regression_reference.joblib",
     "regression_residuals": "regression_residuals.npz",
     "regression_quantile_head": "regression_quantile_head.pt",
+    "detection_head": "spatial_query_decoder.pt",
 }
 
 
@@ -131,6 +171,7 @@ def load_config(path: str | Path | None = None) -> RuntimeConfig:
     model_raw = dict(raw.get("model", {}))
     mlc_raw = dict(raw.get("multilabel", {}))
     regression_raw = dict(raw.get("regression", {}))
+    detection_raw = dict(raw.get("detection", {}))
     path_raw = dict(raw.get("paths", {}))
     model = ModelConfig(
         name=str(model_raw.get("name", ModelConfig.name)),
@@ -161,15 +202,36 @@ def load_config(path: str | Path | None = None) -> RuntimeConfig:
         quantiles=quantiles,  # type: ignore[arg-type]
         geometry_pca_components=int(regression_raw.get("geometry_pca_components", RegressionConfig.geometry_pca_components)),
     )
+    detection = DetectionConfig(
+        presence_threshold=float(detection_raw.get("presence_threshold", DetectionConfig.presence_threshold)),
+        vision_dim=int(detection_raw.get("vision_dim", DetectionConfig.vision_dim)),
+        head_dim=int(detection_raw.get("head_dim", detection_raw.get("hidden", DetectionConfig.head_dim))),
+        attention_heads=int(detection_raw.get("attention_heads", detection_raw.get("heads", DetectionConfig.attention_heads))),
+        decoder_layers=int(detection_raw.get("decoder_layers", DetectionConfig.decoder_layers)),
+        decoder_ffn_dim=int(detection_raw.get("decoder_ffn_dim", detection_raw.get("decoder_feedforward_dim", DetectionConfig.decoder_ffn_dim))),
+        dropout=float(detection_raw.get("dropout", DetectionConfig.dropout)),
+        max_queries=int(detection_raw.get("max_queries", DetectionConfig.max_queries)),
+        seed=int(detection_raw.get("seed", DetectionConfig.seed)),
+        epochs=int(detection_raw.get("epochs", DetectionConfig.epochs)),
+        batch_size=int(detection_raw.get("batch_size", DetectionConfig.batch_size)),
+        learning_rate=float(detection_raw.get("learning_rate", DetectionConfig.learning_rate)),
+        weight_decay=float(detection_raw.get("weight_decay", DetectionConfig.weight_decay)),
+        warmup_ratio=float(detection_raw.get("warmup_ratio", DetectionConfig.warmup_ratio)),
+        max_grad_norm=float(detection_raw.get("max_grad_norm", DetectionConfig.max_grad_norm)),
+        matching_giou_weight=float(detection_raw.get("matching_giou_weight", DetectionConfig.matching_giou_weight)),
+        box_loss_weight=float(detection_raw.get("box_loss_weight", DetectionConfig.box_loss_weight)),
+        presence_loss_weight=float(detection_raw.get("presence_loss_weight", DetectionConfig.presence_loss_weight)),
+    )
     return RuntimeConfig(
         model=model,
         multilabel=multilabel,
         regression=regression,
+        detection=detection,
         checkpoint_dir=Path(path_raw.get("checkpoint_dir", "checkpoints")),
     )
 
 
 __all__ = [
-    "ASSET_FILENAMES", "AssetBundle", "ModelConfig", "MultilabelConfig",
-    "RegressionConfig", "RuntimeConfig", "load_config",
+    "ASSET_FILENAMES", "AssetBundle", "DetectionConfig", "ModelConfig",
+    "MultilabelConfig", "RegressionConfig", "RuntimeConfig", "load_config",
 ]

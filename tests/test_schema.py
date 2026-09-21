@@ -5,7 +5,10 @@ from PIL import Image
 
 from medical_parsing.schema import (
     TASK_CLASSIFICATION,
+    TASK_DETECTION,
     atomic_write_jsonl,
+    canonical_task,
+    parse_detection_boxes,
     parse_choices,
     prepared_image,
     read_records,
@@ -30,6 +33,27 @@ def test_input_and_output_schema(tmp_path):
     assert prepared_image(str(image_path)).size == (896, 896)
     output = [{"uid": "x", "task_type": "classification", "prediction": "A"}]
     assert validate_output_rows(rows, output, set()) == {"rows": 1, "status": "PASS"}
+
+
+def test_detection_schema_parser_and_output_contract(tmp_path):
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (100, 80), "white").save(image_path)
+    assert canonical_task("instance_detection") == TASK_DETECTION
+    input_rows = validate_input_rows([{
+        "uid": "d", "task_type": "detection", "dataset": "ultrasound",
+        "prompt": "return lesion boxes", "images": [str(image_path)],
+    }], image_root=tmp_path)
+    assert parse_detection_boxes('{"x": 10, "y": 20, "width": 30, "height": 15}') == [
+        (10.0, 20.0, 40.0, 35.0, None),
+    ]
+    output = [{"uid": "d", "task_type": "detection", "prediction": "[[10,20,40,35]]"}]
+    assert validate_output_rows(input_rows, output, set()) == {"rows": 1, "status": "PASS"}
+    with pytest.raises(ValueError, match="ordered"):
+        validate_output_rows(
+            input_rows,
+            [{"uid": "d", "task_type": "detection", "prediction": "[[40,20,10,35]]"}],
+            set(),
+        )
 
 
 def test_comma_inside_a_canonical_atom_is_preserved():

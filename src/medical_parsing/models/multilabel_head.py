@@ -1,4 +1,4 @@
-"""Token-conditioned residual probability head for multi-label inference."""
+"""Residual probability head used by Evidence-Guided Set Decoding."""
 
 from __future__ import annotations
 
