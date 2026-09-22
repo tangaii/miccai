@@ -10,9 +10,7 @@ This repository is the public implementation accompanying the paper.
 Useful references:
 
 - [GitHub repository](https://github.com/tangaii/MedParse)
-- [Method-to-code map](docs/METHOD_CODE_MAP.md)
 - [Checkpoint contract](checkpoints/README.md)
-- [Data contract](data/README.md)
 
 ## Environments and Requirements
 
@@ -23,7 +21,7 @@ Useful references:
 | Development accelerator | PPU-ZW810E, 96 GiB |
 | Qualification accelerator | NVIDIA A10 |
 | CUDA | 12.9 |
-| Dependencies | `requirements.txt`, `requirements-dev.txt` |
+| Dependencies | `requirements.txt`, `pyproject.toml` |
 
 Install the runtime and development dependencies with:
 
@@ -33,7 +31,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e .
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 ```
 
 The qualification run used an NVIDIA A10 for 1,783 inputs and completed in
@@ -54,8 +52,9 @@ per row:
 Supported task types are `classification`, `multi_label_classification`,
 `detection`, and `regression`. Each row has a unique UID, a dataset/source,
 one question or prompt, and exactly one image. Training labels use a separate
-contract. See [data/README.md](data/README.md) for the complete schema and
-validation boundary.
+contract. Inputs must not include answer, target, label, reference, or
+prediction fields; detection predictions use original-image `[x1,y1,x2,y2]`
+boxes. `scripts/prepare_data.py` performs manifest validation and normalization.
 
 The BUS-UCLM/BUSI ultrasound data form a separate 175-case labeled cohort for
 the Detection study. This cohort is not the organizer's hidden Detection split
@@ -102,8 +101,13 @@ The paper-level implementation has five modules:
    retrieval, residual, and ordered-quantile estimates into a value in
    `[0, 100]`.
 
-Implementation symbols and contracts are mapped in
-[docs/METHOD_CODE_MAP.md](docs/METHOD_CODE_MAP.md).
+| Paper module | Primary code |
+| --- | --- |
+| Shared interface | `src/medical_parsing/models/backbone.py` |
+| Classification | `src/medical_parsing/tasks/classification.py` |
+| Evidence-guided set decoding | `src/medical_parsing/tasks/multilabel.py` |
+| Spatial query decoding | `src/medical_parsing/tasks/detection.py` |
+| Quantile regression | `src/medical_parsing/tasks/regression.py` |
 
 ## Training
 
@@ -227,13 +231,17 @@ heads, estimators, retrieval tables, and residual files listed in
 challenge images are not committed to the repository. Official challenge scores
 require the organizer-provided evaluator.
 
+The checkpoint directory expects the base model and adapters externally, plus
+the route manifest, classification heads, MLC templates/library/selector/
+ranker/probability/residual assets, `spatial_query_decoder.pt`, and regression
+visual/reference/residual/quantile assets. The checkpoint README is the filename
+and schema contract for this bundle.
+
 ## Repository Structure
 
 ```text
-configs/                  Runtime defaults and reference contracts
+configs/default.yaml      Runtime defaults and reference contracts
 checkpoints/README.md     External asset names and schemas
-data/README.md            Input schema and data boundary
-docs/METHOD_CODE_MAP.md   Paper-to-code mapping
 src/medical_parsing/      Package implementation
   data/                   Manifest preparation
   evaluation/             Local metrics
@@ -242,6 +250,8 @@ src/medical_parsing/      Package implementation
   tasks/                  Task implementations
   training/               Component fitting
 tests/                    Contract and behavior tests
+scripts/                  Manifest and smoke-data utilities
+tools/                    Feature and target preparation utilities
 inference.py              Public inference CLI
 train.py                  Public fitting CLI
 evaluate.py               Local evaluation CLI
@@ -276,5 +286,5 @@ MedGemma model and the open-source software used in this work.
 ## License
 
 The original research code is released under the MIT License; see
-[LICENSE](LICENSE) and [LICENSE_DECISION.md](LICENSE_DECISION.md). External
-model, adapter, dependency, and dataset terms remain applicable.
+[LICENSE](LICENSE). External model, adapter, dependency, and dataset terms
+remain applicable.
